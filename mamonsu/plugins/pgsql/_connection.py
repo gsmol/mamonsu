@@ -7,8 +7,6 @@ from .pg8000 import connect
 
 class Connection(object):
 
-    QueryTimeout = int(os.environ.get('PGTIMEOUT') or 1)
-
     def __init__(self, database):
         self.database = database
         self.lock = threading.Lock()
