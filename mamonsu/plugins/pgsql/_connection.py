@@ -77,7 +77,8 @@ class Connection(object):
             self.log.debug(
                 '[{0}] Set statement timeout...'.format(
                     self._conn_string()))
+            query_timeout = int(os.environ.get('PGTIMEOUT') or 1)
             cur = self.conn.cursor()
             cur.execute('set statement_timeout to {0}'.format(
-                self.QueryTimeout * 1000))
+                query_timeout * 1000))
             cur.close()
