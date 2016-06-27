@@ -7,18 +7,50 @@ import os
 import re
 import glob
 
+sudoWorking = None
+
+
+def is_sudo_working():
+    global sudoWorking
+    if os.getuid() == 0:
+        sudoWorking = True
+        return
+    if sudoWorking is None:
+        sudoWorking = False
+        p = subprocess.Popen(
+            'sudo true',
+            shell=True,
+            stdin=None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True)
+        exec_time = 0
+        while p.poll() is None:
+            time.sleep(0.1)
+            exec_time += 0.1
+            if exec_time >= 1:
+                return
+        if p.returncode == 0:
+            sudoWorking = True
+    return sudoWorking
+
 
 class Shell(object):
 
     # exit status of timeout code
     TimeoutCode = -1
+    # local var
+    _sudo_result = None
 
-    def __init__(self, cmd, wait_time=20000, sudo=False):
+    def __init__(self, cmd, timeout=10, sudo=False):
         self.status = self.TimeoutCode
         self.cmd, self.sudo = cmd, sudo
-        self._real_command = cmd
+        if sudo and is_sudo_working():
+            self._real_command = 'sudo {0}'.format(cmd)
+        else:
+            self._real_command = cmd
         self.stdout, self.stderr = '', ''
-        self.wait_time, self.exec_time = wait_time, 0
+        self.wait_time, self.exec_time = timeout, 0
         p = subprocess.Popen(
             self._real_command,
             shell=True,
@@ -31,32 +63,43 @@ class Shell(object):
             self.exec_time += 0.1
             line = p.stdout.read()
             if not line == '':
-                self.stdout += "{0}\n".format(line)
+                self.stdout += line.decode('utf-8')
             line = p.stderr.read()
             if not line == '':
-                self.stderr += "{0}\n".format(line)
+                self.stderr += line.decode('utf-8')
             if self.wait_time > 0 and self.exec_time >= self.wait_time:
                 return
         self.status = p.returncode
-        self.stdout += ''.join(p.stdout.readlines())
-        self.stderr += ''.join(p.stdout.readlines())
+        for line in p.stdout.readlines():
+            self.stdout += line.decode('utf-8')
+        for line in p.stderr.readlines():
+            self.stderr += line.decode('utf-8')
+        self.stdout = self.stdout.strip()
+        self.stderr = self.stderr.strip()
 
     def error(self):
         return 'Command `{0}` error code: {1}, sdterr: {2}'.format(
-            self.cmd, self.status, self.stderr).strip()
+            self.cmd, self.status, self.stderr)
 
 
 class SystemInfo(object):
 
     def __init__(self):
+        logging.info('Test if sudo is working: {0}'.format(is_sudo_working()))
+        logging.info('Collecting date...')
+        self.date = self._fetch_date()
+        logging.info('Collecting hostname...')
+        self.hostname = self._fetch_hostname()
         logging.info('Collecting sysctl...')
-        self.sysctl = self._fetch_sysctl()
+        self.raw_sysctl = self._fetch_sysctl()
+        logging.info('Collecting sysctl...')
+        self.sysctl = self._parse_sysctl(self.raw_sysctl)
         logging.info('Collecting dmesg...')
         self.dmesg = self._fetch_dmesg()
         logging.info('Collecting lspci...')
         self.lspci = self._fetch_lspci()
         logging.info('Collecting release version...')
-        self.system_release = self._fetch_release()
+        self.system_release = self._fetch_release().strip()
         logging.info('Collecting kernel version...')
         self.kernel = self._fetch_kernel()
         logging.info('Collecting virtualization...')
@@ -94,6 +137,55 @@ class SystemInfo(object):
         logging.info('Collecting mdstat info...')
         self.mdstat = self._fetch_mdstat()
 
+    def printable_info(self):
+
+        def format_header(info):
+            return "\n# {0} ###############\n".format(info)
+
+        def format_out(key, val):
+            return "\t{0}\t\t| {1}\n".format(key, val)
+
+        out = ''
+        out += format_header('System')
+        out += format_out('Date', self.date)
+        out += format_out('Host', self.hostname)
+        out += format_out('Uptime', self.uptime)
+        out += format_out('System', self.system_info['TOTAL'])
+        out += format_out('Serial', self.system_info['SERIAL'])
+        out += format_out('Release', self.system_release)
+        out += format_out('Kernel', self.kernel)
+        out += format_out('Arch', 'CPU = {0}, OS = {1}'.format(
+            self.cpu_arch, self.os_arch))
+        out += format_out('Virt', self.virtualization)
+        out += format_header('Processors')
+        out += format_out('Total', self.parsed_cpu_info['_TOTAL'])
+        out += format_out('Speed', self.parsed_cpu_info['speed'])
+        out += format_out('Model', self.parsed_cpu_info['model'])
+        out += format_out('Cache', self.parsed_cpu_info['cache'])
+        out += format_header('Memory')
+        out += format_out('Total', self.parsed_meminfo['_TOTAL'])
+        out += format_out('Cached', self.parsed_meminfo['_CACHED'])
+        out += format_out('Dirty', self.parsed_meminfo['_DIRTY'])
+        out += format_out('Swap', self.parsed_meminfo['_SWAP'])
+        return out
+
+    def store_raw(self, filename):
+        def format_out(info, val):
+            return "# {0} ###############\n{1}\n".format(
+                info, val)
+        out = format_out('SYSCTL', self.raw_sysctl)
+        out += format_out('DMESG', self.dmesg)
+        out += format_out('LSPCI', self.lspci)
+        out += format_out('CPUINFO', self.cpu_info)
+        out += format_out('MEMINFO', self.meminfo)
+        out += format_out('DMIDECODE', self.dmidecode)
+        out += format_out('DF', self.df)
+        out += format_out('MOUNT', self.mount)
+        out += format_out('MDSTAT', self.mdstat)
+        out += format_out('LVS', self.lvs)
+        out += format_out('VGS', self.vgs)
+        print(out)
+
     _suffixes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 
     def _humansize(self, nbytes):
@@ -106,21 +198,44 @@ class SystemInfo(object):
         f = ('%.2f' % nbytes).rstrip('0').rstrip('.')
         return '%s %s' % (f, self._suffixes[i])
 
-    def _fetch_sysctl(self):
-        result = {}
-        shell = Shell('sysctl -a')
+    def _fetch_hostname(self):
+        shell = Shell('uname -n')
         if shell.status == 0:
-            logging.debug("`systcl -a` return stderr: %s", shell.stderr)
-            for out in shell.stdout.split("\n"):
-                try:
-                    k, v = out.split(" = ")
-                    result[k] = out[k]
-                except:
-                    logging.error(
-                        "unexpected `systcl -a` output: '{0}'".format(out))
-                    continue
+            return shell.stdout
         else:
             logging.error(shell.error())
+        return 'N/A'
+
+    def _fetch_date(self):
+        result = ''
+        shell = Shell("date -u +'%F %T UTC'")
+        if shell.status == 0:
+            result += shell.stdout
+        shell = Shell("date +'%Z %z'")
+        if shell.status == 0:
+            result = "{0} (local TZ:{1})".format(result, shell.stdout)
+        return result
+
+    def _fetch_sysctl(self):
+        shell = Shell('sysctl -a')
+        if shell.status == 0:
+            return shell.stdout
+        else:
+            logging.error(shell.error())
+        return ''
+
+    def _parse_sysctl(self, sysctl):
+        result = {}
+        if sysctl == '':
+            return result
+        for out in sysctl.split("\n"):
+            try:
+                k, v = out.split(" = ")
+                result[k] = v
+            except:
+                logging.error(
+                    "unexpected `systcl -a` output: '{0}'".format(out))
+                continue
         return result
 
     def _fetch_dmesg(self):
@@ -129,14 +244,13 @@ class SystemInfo(object):
                 with open('/var/log/dmesg', 'r') as content_file:
                     content = content_file.read()
                     return content
-            shell = Shell('dmesg')
-            if shell.status == 0:
-                return shell.stdout
-            else:
-                logging.error(shell.error())
-                return ''
         except:
-            logging.error('can\'t fetch dmesg info')
+            pass
+        shell = Shell('dmesg')
+        if shell.status == 0:
+            return shell.stdout
+        else:
+            logging.error(shell.error())
             return ''
 
     def _fetch_virtualization(self, dmesg):
@@ -287,8 +401,7 @@ class SystemInfo(object):
         return 'N/A'
 
     def _fetch_dmidecode(self):
-        sudo = os.getuid() == 0
-        shell = Shell('dmidecode', sudo=sudo)
+        shell = Shell('dmidecode', sudo=True)
         if shell.status == 0:
             return shell.stdout
         else:
@@ -308,8 +421,12 @@ class SystemInfo(object):
         result = {}
         result['vendor'] = dmidecode('system-manufacturer')
         result['product'] = dmidecode('system-product-name')
+        result['version'] = dmidecode('system-version')
         result['chassis'] = dmidecode('chassis-type')
-        result['serial'] = dmidecode('system-serial-number')
+        result['SERIAL'] = dmidecode('system-serial-number')
+        result['TOTAL'] = '{0}; {1}; {2} ({3})'.format(
+            result['vendor'], result['product'],
+            result['chassis'], result['version'])
         return result
 
     def _fetch_mount(self):
@@ -383,6 +500,11 @@ class SystemInfo(object):
         result['model'] = fetch_first(r'model name\s+\:\s+(.*)$', info)
         result['cache'] = fetch_first(r'cache size\s+\:\s+(.*)$', info)
         result['speed'] = fetch_first(r'^cpu MHz\s+\:\s+(\d+\.\d+)$', info)
+        result['_TOTAL'] = 'physical = {0}, cores = {1}, '\
+            'virtual = {2}, hyperthreading = {3}'.format(
+                result['physical'], result['cores'],
+                result['virtual'], result['hyperthreading']
+            )
         return result
 
     def _fetch_meminfo(self):
@@ -409,7 +531,7 @@ class SystemInfo(object):
             result['_TOTAL'] = self._humansize(result['MemTotal'])
         result['_SWAP'] = ''
         if 'SwapTotal' in result:
-            result['_TOTAL'] = self._humansize(result['SwapTotal'])
+            result['_SWAP'] = self._humansize(result['SwapTotal'])
         result['_CACHED'] = ''
         if 'Cached' in result:
             result['_CACHED'] = self._humansize(result['Cached'])
@@ -419,16 +541,16 @@ class SystemInfo(object):
         result['_SWAPPINESS'] = ''
         if 'vm.swappiness' in sysctl:
             result['_SWAPPINESS'] = sysctl['vm.swappiness']
-        result['DIRTY_RATIO'] = '0 0'
+        result['_DIRTY_RATIO'] = '0 0'
         if 'vm.dirty_ratio' in sysctl:
             if 'vm.dirty_background_ratio' in sysctl:
-                result['DIRTY_RATIO'] = '{0} {1}'.format(
+                result['_DIRTY_RATIO'] = '{0} {1}'.format(
                     sysctl['vm.dirty_ratio'],
                     sysctl['vm.dirty_background_ratio'])
-        result['DIRTY_BYTES'] = '0 0'
+        result['_DIRTY_BYTES'] = '0 0'
         if 'vm.dirty_bytes' in sysctl:
             if 'vm.dirty_background_bytes' in sysctl:
-                result['DIRTY_RATIO'] = '{0} {1}'.format(
+                result['_DIRTY_BYTES'] = '{0} {1}'.format(
                     sysctl['vm.dirty_bytes'],
                     sysctl['vm.dirty_background_bytes'])
         return result
@@ -482,4 +604,5 @@ class SystemInfo(object):
 
 logging.basicConfig(level=logging.INFO)
 info = SystemInfo()
-print(info)
+print(info.printable_info())
+# info.store_raw("a")
