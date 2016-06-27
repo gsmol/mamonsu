@@ -34,10 +34,13 @@ class Shell(object):
         self.stdout = ''.join(p.stdout.readlines())
         self.stderr = ''.join(p.stdout.readlines())
 
+    def error(self):
+        return 'Command `{0}` error code: {1}, sdterr: {2}'.format(
+            self.cmd, self.status, self.stderr)
+
 
 class SystemInfo(object):
 
-    """ Shell """
     def __init__(self):
         self.sysctl = self._fetch_sysctl()
         self.dmesg = self._fetch_dmesg()
@@ -45,7 +48,11 @@ class SystemInfo(object):
         self.system_release = self._fetch_release()
         self.kernel = self._fetch_kernel()
         self.virtualization = self._fetch_virtualization(self.dmesg)
-        self.raid = self._fetch_raid(self.lspci)
+        self.raid = self._fetch_raid(self.lspci, self.dmesg)
+        self.uptime = self._fetch_uptime()
+        self.cpu_arch = self._fetch_cpu_arch()
+        self.os_arch = self._fetch_os_arch()
+        self.system_info = self._fetch_system_info()
 
     def _fetch_sysctl(self):
         result = {}
@@ -61,17 +68,22 @@ class SystemInfo(object):
                         "unexpected `systcl -a` output: '{0}'".format(out))
                     return
         else:
-            logging.error(
-                "`sysctl -a` error code: %s", shell.status)
+            logging.error(shell.error())
         return result
 
     def _fetch_dmesg(self):
         try:
-            with open('/var/log/dmesg', 'r') as content_file:
-                content = content_file.read()
-                return content
+            if os.path.isfile('/var/log/dmesg'):
+                with open('/var/log/dmesg', 'r') as content_file:
+                    content = content_file.read()
+                    return content
+            shell = Shell('dmesg')
+            if shell.status == 0:
+                return shell.stdout
+            else:
+                raise(shell.error())
         except Exception as e:
-            logging.error("Fetch dmesg error: %s", e)
+            logging.error('Fetch dmesg error: %s', e)
             return ''
 
     def _fetch_virtualization(self, dmesg):
@@ -102,7 +114,7 @@ class SystemInfo(object):
         if shell.status == 0:
             return shell.stdout
         else:
-            logging.error("lspci error code: %s", shell.status)
+            logging.error(shell.error())
             return ''
 
     def _fetch_release(self):
@@ -139,10 +151,10 @@ class SystemInfo(object):
         if shell.status == 0:
             return shell.stdout
         else:
-            logging.error("`uname -r` error code: %s", shell.status)
+            logging.error(shell.error())
             return ''
 
-    def _fetch_raid(sel, lspci):
+    def _fetch_raid(sel, lspci, dmesg):
         if lspci != '':
             if re.search(
                 'RAID bus controller: LSI Logic / Symbios Logic MegaRAID SAS',
@@ -176,4 +188,59 @@ class SystemInfo(object):
                 'Hewlett-Packard Company Smart Array',
                     lspci, re.IGNORECASE):
                 return 'HP Smart Array'
+        if dmesg != '':
+            if re.search('scsi[0-9].*: .*megaraid', dmesg, re.IGNORECASE):
+                return 'LSI Logic MegaRAID SAS'
+            if re.search('Fusion MPT SAS', dmesg):
+                return 'Fusion-MPT SAS'
+            if re.search('scsi[0-9].*: .*aacraid', dmesg, re.IGNORECASE):
+                return 'AACRAID'
+            if re.search(
+                'scsi[0-9].*: .*3ware [0-9]* Storage Controller',
+                    dmesg, re.IGNORECASE):
+                return '3Ware'
         return ''
+
+    def _fetch_uptime(self):
+        shell = Shell('uptime')
+        if not shell.status == 0:
+            logging.error(shell.error())
+        return shell.stdout
+
+    def _fetch_cpu_arch(self):
+        if os.path.isfile('/proc/cpuinfo'):
+            try:
+                with open(file, '/proc/cpuinfo') as content_file:
+                    content = content_file.read()
+                    if re.search(' lm ', content):
+                        return '64-bit'
+                    else:
+                        return '32-bit'
+            except:
+                pass
+        return 'N/A'
+
+    def _fetch_os_arch(self):
+        shell = Shell('getconf LONG_BIT')
+        if shell.status == 0:
+            if re.search('64', shell.stdout):
+                return '64-bit'
+            if re.search('32', shell.stdout):
+                return '32-bit'
+        else:
+            logging.error(shell.error())
+        return 'N/A'
+
+    def _fetch_system_info(self):
+        def set_key(result, key, param):
+            shell = Shell('dmidecode -s "{0}"'.format(key), 1)
+            if shell.status == 0:
+                result[param] = shell.stdout
+            else:
+                logging.error(shell.error())
+        result = {}
+        set_key(result, 'vendor', 'system-manufacturer')
+        set_key(result, 'product', 'system-product-name')
+        set_key(result, 'chassis', 'chassis-type')
+        set_key(result, 'serial', 'system-serial-number')
+        return result
