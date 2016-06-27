@@ -140,10 +140,10 @@ class SystemInfo(object):
     def printable_info(self):
 
         def format_header(info):
-            return "\n# {0} ###############\n".format(info)
+            return "\n# {0} ##################################\n".format(info)
 
         def format_out(key, val):
-            return "\t{0}\t|\t{1}\n".format(key, val)
+            return "{0:20s}|\t{1}\n".format(key, val)
 
         out = ''
         out += format_header('System')
@@ -177,6 +177,12 @@ class SystemInfo(object):
             out += format_out(disk, 'Scheduler: {0} Queue: {1}'.format(
                 self.disks[disk]['scheduler'],
                 self.disks[disk]['nr_requests']))
+        out += format_header('LVM')
+        out += self.vgs + "\n"
+        out += self.lvs + "\n"
+        out += format_header('Raid')
+        for raid in self.parsed_raid:
+            out += format_out('Controller', raid)
         return out
 
     def store_raw(self, filename):
@@ -207,6 +213,15 @@ class SystemInfo(object):
             i += 1
         f = ('%.2f' % nbytes).rstrip('0').rstrip('.')
         return '%s %s' % (f, self._suffixes[i])
+
+    def _remove_duplicates(self, values):
+        output = []
+        seen = set()
+        for value in values:
+            if value not in seen:
+                output.append(value)
+                seen.add(value)
+        return output
 
     def _fetch_hostname(self):
         shell = Shell('uname -n')
@@ -333,52 +348,53 @@ class SystemInfo(object):
             logging.error(shell.error())
             return ''
 
-    def _parse_raid(sel, lspci, dmesg):
+    def _parse_raid(self, lspci, dmesg):
+        controllers = []
         if lspci != '':
             if re.search(
                 r'RAID bus controller: LSI Logic / Symbios Logic MegaRAID SAS',
                     lspci, re.I):
-                return 'LSI Logic MegaRAID SAS'
+                controllers.append('LSI Logic MegaRAID SAS')
             if re.search(
                 r'RAID bus controller: LSI Logic / Symbios Logic LSI MegaSAS',
                     lspci, re.I):
-                return 'LSI Logic MegaRAID SAS'
+                controllers.append('LSI Logic MegaRAID SAS')
             if re.search(
                 r'Fusion-MPT SAS',
                     lspci, re.I):
-                return 'Fusion-MPT SAS'
+                controllers.append('Fusion-MPT SAS')
             if re.search(
                 r'RAID bus controller: LSI Logic / Symbios Logic Unknown',
                     lspci, re.I):
-                return 'LSI Logic Unknown'
+                controllers.append('LSI Logic Unknown')
             if re.search(
                 r'RAID bus controller: Adaptec AAC-RAID',
                     lspci, re.I):
-                return 'AACRAID'
+                controllers.append('AACRAID')
             if re.search(
                 r'3ware [0-9]* Storage Controller',
                     lspci, re.I):
-                return '3Ware'
+                controllers.append('3Ware')
             if re.search(
                 r'Hewlett-Packard Company Smart Array',
                     lspci, re.I):
-                return 'HP Smart Array'
+                controllers.append('HP Smart Array')
             if re.search(
                 r'Hewlett-Packard Company Smart Array',
                     lspci, re.I):
-                return 'HP Smart Array'
+                controllers.append('HP Smart Array')
         if dmesg != '':
             if re.search(r'scsi[0-9].*: .*megaraid', dmesg, re.I):
-                return 'LSI Logic MegaRAID SAS'
+                controllers.append('LSI Logic MegaRAID SAS')
             if re.search(r'Fusion MPT SAS', dmesg):
-                return 'Fusion-MPT SAS'
+                controllers.append('Fusion-MPT SAS')
             if re.search(r'scsi[0-9].*: .*aacraid', dmesg, re.I):
-                return 'AACRAID'
+                controllers.append('AACRAID')
             if re.search(
                 r'scsi[0-9].*: .*3ware [0-9]* Storage Controller',
                     dmesg, re.I):
-                return '3Ware'
-        return ''
+                controllers.append('3Ware')
+        return self._remove_duplicates(controllers)
 
     def _fetch_uptime(self):
         shell = Shell('uptime')
@@ -470,15 +486,6 @@ class SystemInfo(object):
 
     def _parse_cpu_info(self, info):
 
-        def remove_duplicates(values):
-            output = []
-            seen = set()
-            for value in values:
-                if value not in seen:
-                    output.append(value)
-                    seen.add(value)
-            return output
-
         def fetch_first(reg, info):
             val = re.search(reg, info, re.M)
             if val is not None:
@@ -492,7 +499,7 @@ class SystemInfo(object):
         result = {}
         result['virtual'] = len(
             re.findall(r'(^|\n)processor', info))
-        result['physical'] = len(remove_duplicates(
+        result['physical'] = len(self._remove_duplicates(
             re.findall(
                 r'^physical id\s+\:\s+(\d+)', info, re.M)))
         cores = re.search(
