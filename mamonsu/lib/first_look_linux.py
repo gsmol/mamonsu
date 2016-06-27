@@ -143,7 +143,7 @@ class SystemInfo(object):
             return "\n# {0} ###############\n".format(info)
 
         def format_out(key, val):
-            return "\t{0}\t\t| {1}\n".format(key, val)
+            return "\t{0}\t|\t{1}\n".format(key, val)
 
         out = ''
         out += format_header('System')
@@ -166,7 +166,17 @@ class SystemInfo(object):
         out += format_out('Total', self.parsed_meminfo['_TOTAL'])
         out += format_out('Cached', self.parsed_meminfo['_CACHED'])
         out += format_out('Dirty', self.parsed_meminfo['_DIRTY'])
+        out += format_out('Dirty ratio', self.parsed_meminfo['_DIRTY_RATIO'])
+        out += format_out('Dirty bytes', self.parsed_meminfo['_DIRTY_BYTES'])
         out += format_out('Swap', self.parsed_meminfo['_SWAP'])
+        out += format_out('Swappines', self.parsed_meminfo['_SWAPPINESS'])
+        out += format_header('Mount')
+        out += self.df + "\n"
+        out += format_header('Disks')
+        for disk in self.disks:
+            out += format_out(disk, 'Scheduler: {0} Queue: {1}'.format(
+                self.disks[disk]['scheduler'],
+                self.disks[disk]['nr_requests']))
         return out
 
     def store_raw(self, filename):
@@ -559,13 +569,15 @@ class SystemInfo(object):
         result = {}
         for block in glob.glob('/sys/block/*'):
             data, disk = {}, block.replace('/sys/block/', '')
+            if re.search('(ram|loop)', disk):
+                continue
             scheduler = '{0}/queue/scheduler'.format(block)
             nr_requests = '{0}/queue/nr_requests'.format(block)
             try:
                 if os.path.isfile(scheduler):
-                    data['scheduler'] = open(scheduler, 'r').read()
+                    data['scheduler'] = open(scheduler, 'r').read().strip()
                 if os.path.isfile(nr_requests):
-                    data['nr_requests'] = open(nr_requests, 'r').read()
+                    data['nr_requests'] = open(nr_requests, 'r').read().strip()
                 shell = Shell('fdisk -l /dev/{0}'.format(disk), sudo=True)
                 if shell.status == 0:
                     data['fdisk'] = shell.stdout
@@ -575,6 +587,7 @@ class SystemInfo(object):
             except:
                 continue
             result[disk] = data
+        return result
 
     def _fetch_lvs(self):
         shell = Shell('lvs', sudo=True)
