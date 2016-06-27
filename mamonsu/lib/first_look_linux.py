@@ -13,55 +13,86 @@ class Shell(object):
     # exit status of timeout code
     TimeoutCode = -1
 
-    def __init__(self, cmd, wait_time=10, sudo=False):
-        self.status = 0
-        self.cmd = cmd
-        self.stdout, self.stderr = None, None
+    def __init__(self, cmd, wait_time=20000, sudo=False):
+        self.status = self.TimeoutCode
+        self.cmd, self.sudo = cmd, sudo
+        self._real_command = cmd
+        self.stdout, self.stderr = '', ''
         self.wait_time, self.exec_time = wait_time, 0
-        self._run()
-
-    def _run(self):
         p = subprocess.Popen(
-            self.cmd, shell=True,
+            self._real_command,
+            shell=True,
+            stdin=None,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, close_fds=True)
+            stderr=subprocess.PIPE,
+            close_fds=True)
         while p.poll() is None:
             time.sleep(0.1)
             self.exec_time += 0.1
-            if self.wait_time > 0 and self.exec_time > self.wait_time:
-                self.status = self.TimeoutCode
+            line = p.stdout.read()
+            if not line == '':
+                self.stdout += "{0}\n".format(line)
+            line = p.stderr.read()
+            if not line == '':
+                self.stderr += "{0}\n".format(line)
+            if self.wait_time > 0 and self.exec_time >= self.wait_time:
                 return
         self.status = p.returncode
-        self.stdout = ''.join(p.stdout.readlines())
-        self.stderr = ''.join(p.stdout.readlines())
+        self.stdout += ''.join(p.stdout.readlines())
+        self.stderr += ''.join(p.stdout.readlines())
 
     def error(self):
         return 'Command `{0}` error code: {1}, sdterr: {2}'.format(
-            self.cmd, self.status, self.stderr)
+            self.cmd, self.status, self.stderr).strip()
 
 
 class SystemInfo(object):
 
     def __init__(self):
+        logging.info('Collecting sysctl...')
         self.sysctl = self._fetch_sysctl()
+        logging.info('Collecting dmesg...')
         self.dmesg = self._fetch_dmesg()
+        logging.info('Collecting lspci...')
         self.lspci = self._fetch_lspci()
+        logging.info('Collecting release version...')
         self.system_release = self._fetch_release()
+        logging.info('Collecting kernel version...')
         self.kernel = self._fetch_kernel()
+        logging.info('Collecting virtualization...')
         self.virtualization = self._fetch_virtualization(self.dmesg)
+        logging.info('Collecting raid...')
         self.parsed_raid = self._parse_raid(self.lspci, self.dmesg)
+        logging.info('Collecting uptime...')
         self.uptime = self._fetch_uptime()
+        logging.info('Collecting cpu arch...')
         self.cpu_arch = self._fetch_cpu_arch()
+        logging.info('Collecting os arch...')
         self.os_arch = self._fetch_os_arch()
+        logging.info('Collecting dmidecode info...')
         self.dmidecode = self._fetch_dmidecode()
+        logging.info('Collecting system info via dmidecode...')
         self.system_info = self._fetch_system_info()
+        logging.info('Collecting mount points...')
         self.mount = self._fetch_mount()
+        logging.info('Collecting df...')
         self.df = self._fetch_df()
+        logging.info('Collecting cpu info...')
         self.cpu_info = self._fetch_cpu_info()
+        logging.info('Parsing cpu info...')
         self.parsed_cpu_info = self._parse_cpu_info(self.cpu_info)
+        logging.info('Collecting meminfo...')
         self.meminfo = self._fetch_meminfo()
+        logging.info('Parsing meminfo...')
         self.parsed_meminfo = self._parse_meminfo(self.meminfo, self.sysctl)
+        logging.info('Collecting disks info...')
         self.disks = self._fetch_disk_info()
+        logging.info('Collecting lvs info...')
+        self.lvs = self._fetch_lvs()
+        logging.info('Collecting vgs info...')
+        self.vgs = self._fetch_vgs()
+        logging.info('Collecting mdstat info...')
+        self.mdstat = self._fetch_mdstat()
 
     _suffixes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 
@@ -87,7 +118,7 @@ class SystemInfo(object):
                 except:
                     logging.error(
                         "unexpected `systcl -a` output: '{0}'".format(out))
-                    return
+                    continue
         else:
             logging.error(shell.error())
         return result
@@ -102,14 +133,17 @@ class SystemInfo(object):
             if shell.status == 0:
                 return shell.stdout
             else:
-                raise(shell.error())
-        except Exception as e:
-            logging.error('Fetch dmesg error: %s', e)
+                logging.error(shell.error())
+                return ''
+        except:
+            logging.error('can\'t fetch dmesg info')
             return ''
 
     def _fetch_virtualization(self, dmesg):
         if dmesg == '':
-            return ''
+            return 'N/A'
+        if os.path.isfile('/proc/user_beancounters'):
+            return 'OpenVZ/Virtuozzo'
         if re.search(r'vmware', dmesg, re.I):
             return 'VMWare'
         if re.search(r'vmxnet', dmesg, re.I):
@@ -128,7 +162,7 @@ class SystemInfo(object):
             return 'VirtualBox'
         if re.search(r'hd.: Virtual .., ATA.*drive', dmesg, re.I):
             return 'Microsoft VirtualPC'
-        return ''
+        return 'N/A'
 
     def _fetch_lspci(self):
         shell = Shell('lspci')
@@ -263,20 +297,19 @@ class SystemInfo(object):
 
     def _fetch_system_info(self):
 
-        def set_key(result, key, param):
-            sudo = os.getuid() == 0
-            shell = Shell(
-                'dmidecode -s "{1}"'.format(key), wait_time=1, sudo=sudo)
+        def dmidecode(key):
+            shell = Shell('dmidecode -s "{0}"'.format(key), sudo=True)
             if shell.status == 0:
-                result[param] = shell.stdout
+                return shell.stdout
             else:
                 logging.error(shell.error())
+                return ''
 
         result = {}
-        set_key(result, 'vendor', 'system-manufacturer')
-        set_key(result, 'product', 'system-product-name')
-        set_key(result, 'chassis', 'chassis-type')
-        set_key(result, 'serial', 'system-serial-number')
+        result['vendor'] = dmidecode('system-manufacturer')
+        result['product'] = dmidecode('system-product-name')
+        result['chassis'] = dmidecode('chassis-type')
+        result['serial'] = dmidecode('system-serial-number')
         return result
 
     def _fetch_mount(self):
@@ -320,7 +353,7 @@ class SystemInfo(object):
             return output
 
         def fetch_first(reg, info):
-            val = re.search(reg, info. re.M)
+            val = re.search(reg, info, re.M)
             if val is not None:
                 return val.group(1)
             else:
@@ -370,7 +403,7 @@ class SystemInfo(object):
             return {}
         result = {}
         for info in re.findall(r'^(\S+)\:\s+(\d+)\s+kB$', data, re.M):
-            result[info[0]] = int(info(1))*1024
+            result[info[0]] = int(info[1])*1024
         result['_TOTAL'] = ''
         if 'MemTotal' in result:
             result['_TOTAL'] = self._humansize(result['MemTotal'])
@@ -383,9 +416,21 @@ class SystemInfo(object):
         result['_DIRTY'] = ''
         if 'Dirty' in result:
             result['_DIRTY'] = self._humansize(result['Dirty'])
-        result['_SWAPPINESS']
+        result['_SWAPPINESS'] = ''
         if 'vm.swappiness' in sysctl:
             result['_SWAPPINESS'] = sysctl['vm.swappiness']
+        result['DIRTY_RATIO'] = '0 0'
+        if 'vm.dirty_ratio' in sysctl:
+            if 'vm.dirty_background_ratio' in sysctl:
+                result['DIRTY_RATIO'] = '{0} {1}'.format(
+                    sysctl['vm.dirty_ratio'],
+                    sysctl['vm.dirty_background_ratio'])
+        result['DIRTY_BYTES'] = '0 0'
+        if 'vm.dirty_bytes' in sysctl:
+            if 'vm.dirty_background_bytes' in sysctl:
+                result['DIRTY_RATIO'] = '{0} {1}'.format(
+                    sysctl['vm.dirty_bytes'],
+                    sysctl['vm.dirty_background_bytes'])
         return result
 
     def _fetch_disk_info(self):
@@ -408,3 +453,33 @@ class SystemInfo(object):
             except:
                 continue
             result[disk] = data
+
+    def _fetch_lvs(self):
+        shell = Shell('lvs', sudo=True)
+        if shell.status == 0:
+            return shell.stdout
+        else:
+            logging.error(shell.error())
+            return ''
+
+    def _fetch_vgs(self):
+        shell = Shell('vgs -o vg_name,vg_size,vg_free', sudo=True)
+        if shell.status == 0:
+            return shell.stdout
+        else:
+            logging.error(shell.error())
+            return ''
+
+    def _fetch_mdstat(self):
+        if os.path.isfile('/proc/mdstat'):
+            try:
+                content = open('/proc/mdstat', 'r').read()
+                return content
+            except:
+                logging.error('Can\'t read /proc/mdstat')
+                return ''
+        return 'N/A'
+
+logging.basicConfig(level=logging.INFO)
+info = SystemInfo()
+print(info)
