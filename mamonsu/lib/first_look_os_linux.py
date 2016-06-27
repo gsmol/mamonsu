@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import subprocess
+import sys
 import time
 import logging
 import os
@@ -44,11 +45,9 @@ class Shell(object):
 
     def __init__(self, cmd, timeout=10, sudo=False):
         self.status = self.TimeoutCode
-        self.cmd, self.sudo = cmd, sudo
+        self.cmd, self._real_command, self.sudo = cmd, cmd, sudo
         if sudo and is_sudo_working():
             self._real_command = 'sudo {0}'.format(cmd)
-        else:
-            self._real_command = cmd
         self.stdout, self.stderr = '', ''
         self.wait_time, self.exec_time = timeout, 0
         p = subprocess.Popen(
@@ -84,7 +83,10 @@ class Shell(object):
 
 class SystemInfo(object):
 
-    def __init__(self):
+    VERSION = '0.0.1'
+
+    def __init__(self, args):
+        self.args = args
         logging.info('Test if sudo is working: {0}'.format(is_sudo_working()))
         logging.info('Collecting date...')
         self.date = self._fetch_date()
@@ -143,9 +145,13 @@ class SystemInfo(object):
             return "\n# {0} ##################################\n".format(info)
 
         def format_out(key, val):
-            return "{0:20s}|\t{1}\n".format(key, val)
+            return "{0:20s}|    {1}\n".format(key, val)
 
         out = ''
+        out += format_header('Report')
+        out += format_out('Version', self.VERSION)
+        out += format_out('Platform', sys.platform)
+        out += format_out('Python', sys.version_info)
         out += format_header('System')
         out += format_out('Date', self.date)
         out += format_out('Host', self.hostname)
@@ -185,9 +191,9 @@ class SystemInfo(object):
             out += format_out('Controller', raid)
         return out
 
-    def store_raw(self, filename):
+    def store_raw(self):
         def format_out(info, val):
-            return "# {0} ###############\n{1}\n".format(
+            return "# {0} ##################################\n{1}\n".format(
                 info, val)
         out = format_out('SYSCTL', self.raw_sysctl)
         out += format_out('DMESG', self.dmesg)
@@ -200,7 +206,14 @@ class SystemInfo(object):
         out += format_out('MDSTAT', self.mdstat)
         out += format_out('LVS', self.lvs)
         out += format_out('VGS', self.vgs)
-        print(out)
+        return out
+
+    def run(self):
+        info = self.printable_info()
+        if self.args.print_report:
+            print(info)
+        logging.error("\n{}\n".format(info))
+        logging.error("\n{}\n".format(self.store_raw()))
 
     _suffixes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 
@@ -621,8 +634,3 @@ class SystemInfo(object):
                 logging.error('Can\'t read /proc/mdstat')
                 return ''
         return 'N/A'
-
-logging.basicConfig(level=logging.INFO)
-info = SystemInfo()
-print(info.printable_info())
-# info.store_raw("a")
