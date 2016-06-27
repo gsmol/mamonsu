@@ -53,6 +53,9 @@ class SystemInfo(object):
         self.cpu_arch = self._fetch_cpu_arch()
         self.os_arch = self._fetch_os_arch()
         self.system_info = self._fetch_system_info()
+        self.mount = self._fetch_mount()
+        self.df = self._fetch_df()
+        self.cpu_info = self._fetch_cpu_info()
 
     def _fetch_sysctl(self):
         result = {}
@@ -244,3 +247,24 @@ class SystemInfo(object):
         set_key(result, 'chassis', 'chassis-type')
         set_key(result, 'serial', 'system-serial-number')
         return result
+
+    def _fetch_mount(self):
+        shell = Shell('mount')
+        if shell.status == 0:
+            return shell.stdout
+        else:
+            logging.error(shell.error())
+            return ''
+
+    def _fetch_df(self):
+        shell = Shell('df -h -P')
+        if shell.status == 0:
+            return shell.stdout
+        else:
+            logging.error(shell.error())
+            return ''
+
+    def _fetch_cpu_info(self):
+        shell = Shell('lscpu')
+        if shell.status == 0:
+            return shell.stdout
