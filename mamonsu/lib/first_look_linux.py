@@ -48,7 +48,7 @@ class SystemInfo(object):
         self.system_release = self._fetch_release()
         self.kernel = self._fetch_kernel()
         self.virtualization = self._fetch_virtualization(self.dmesg)
-        self.raid = self._fetch_raid(self.lspci, self.dmesg)
+        self.raid = self._parsed_raid(self.lspci, self.dmesg)
         self.uptime = self._fetch_uptime()
         self.cpu_arch = self._fetch_cpu_arch()
         self.os_arch = self._fetch_os_arch()
@@ -56,6 +56,9 @@ class SystemInfo(object):
         self.mount = self._fetch_mount()
         self.df = self._fetch_df()
         self.cpu_info = self._fetch_cpu_info()
+        self.parsed_cpu_info = self._parse_cpu_info(self.cpu_info)
+        self.meminfo = self._fetch_meminfo()
+        self.parsed_mem_info = self._parse_meminfo(self.meminfo)
 
     def _fetch_sysctl(self):
         result = {}
@@ -92,23 +95,23 @@ class SystemInfo(object):
     def _fetch_virtualization(self, dmesg):
         if dmesg == '':
             return ''
-        if re.search('vmware', dmesg, re.IGNORECASE):
+        if re.search(r'vmware', dmesg, re.I):
             return 'VMWare'
-        if re.search('vmxnet', dmesg, re.IGNORECASE):
+        if re.search(r'vmxnet', dmesg, re.I):
             return 'VMWare'
-        if re.search('paravirtualized kernel on vmi', dmesg, re.IGNORECASE):
+        if re.search(r'paravirtualized kernel on vmi', dmesg, re.I):
             return 'VMWare'
-        if re.search('Xen virtual console', dmesg, re.IGNORECASE):
+        if re.search(r'Xen virtual console', dmesg, re.I):
             return 'Xen'
-        if re.search('paravirtualized kernel on xen', dmesg, re.IGNORECASE):
+        if re.search(r'paravirtualized kernel on xen', dmesg, re.I):
             return 'Xen'
-        if re.search('qemu', dmesg, re.IGNORECASE):
+        if re.search(r'qemu', dmesg, re.I):
             return 'QEmu'
-        if re.search('paravirtualized kernel on KVM', dmesg, re.IGNORECASE):
+        if re.search(r'paravirtualized kernel on KVM', dmesg, re.I):
             return 'KVM'
-        if re.search('VBOX', dmesg, re.IGNORECASE):
+        if re.search(r'VBOX', dmesg, re.I):
             return 'VirtualBox'
-        if re.search('hd.: Virtual .., ATA.*drive', dmesg, re.IGNORECASE):
+        if re.search(r'hd.: Virtual .., ATA.*drive', dmesg, re.I):
             return 'Microsoft VirtualPC'
         return ''
 
@@ -134,7 +137,7 @@ class SystemInfo(object):
             try:
                 with open('/etc/lsb-release', 'r') as f:
                     for line in f:
-                        if not re.search('DISTRIB_DESCRIPTION', line):
+                        if not re.search(r'DISTRIB_DESCRIPTION', line):
                             continue
                         _, content = line.split('=')
                         return content
@@ -157,50 +160,50 @@ class SystemInfo(object):
             logging.error(shell.error())
             return ''
 
-    def _fetch_raid(sel, lspci, dmesg):
+    def _parsed_raid(sel, lspci, dmesg):
         if lspci != '':
             if re.search(
-                'RAID bus controller: LSI Logic / Symbios Logic MegaRAID SAS',
-                    lspci, re.IGNORECASE):
+                r'RAID bus controller: LSI Logic / Symbios Logic MegaRAID SAS',
+                    lspci, re.I):
                 return 'LSI Logic MegaRAID SAS'
             if re.search(
-                'RAID bus controller: LSI Logic / Symbios Logic LSI MegaSAS',
-                    lspci, re.IGNORECASE):
+                r'RAID bus controller: LSI Logic / Symbios Logic LSI MegaSAS',
+                    lspci, re.I):
                 return 'LSI Logic MegaRAID SAS'
             if re.search(
-                'Fusion-MPT SAS',
-                    lspci, re.IGNORECASE):
+                r'Fusion-MPT SAS',
+                    lspci, re.I):
                 return 'Fusion-MPT SAS'
             if re.search(
-                'RAID bus controller: LSI Logic / Symbios Logic Unknown',
-                    lspci, re.IGNORECASE):
+                r'RAID bus controller: LSI Logic / Symbios Logic Unknown',
+                    lspci, re.I):
                 return 'LSI Logic Unknown'
             if re.search(
-                'RAID bus controller: Adaptec AAC-RAID',
-                    lspci, re.IGNORECASE):
+                r'RAID bus controller: Adaptec AAC-RAID',
+                    lspci, re.I):
                 return 'AACRAID'
             if re.search(
-                '3ware [0-9]* Storage Controller',
-                    lspci, re.IGNORECASE):
+                r'3ware [0-9]* Storage Controller',
+                    lspci, re.I):
                 return '3Ware'
             if re.search(
-                'Hewlett-Packard Company Smart Array',
-                    lspci, re.IGNORECASE):
+                r'Hewlett-Packard Company Smart Array',
+                    lspci, re.I):
                 return 'HP Smart Array'
             if re.search(
-                'Hewlett-Packard Company Smart Array',
-                    lspci, re.IGNORECASE):
+                r'Hewlett-Packard Company Smart Array',
+                    lspci, re.I):
                 return 'HP Smart Array'
         if dmesg != '':
-            if re.search('scsi[0-9].*: .*megaraid', dmesg, re.IGNORECASE):
+            if re.search(r'scsi[0-9].*: .*megaraid', dmesg, re.I):
                 return 'LSI Logic MegaRAID SAS'
-            if re.search('Fusion MPT SAS', dmesg):
+            if re.search(r'Fusion MPT SAS', dmesg):
                 return 'Fusion-MPT SAS'
-            if re.search('scsi[0-9].*: .*aacraid', dmesg, re.IGNORECASE):
+            if re.search(r'scsi[0-9].*: .*aacraid', dmesg, re.I):
                 return 'AACRAID'
             if re.search(
-                'scsi[0-9].*: .*3ware [0-9]* Storage Controller',
-                    dmesg, re.IGNORECASE):
+                r'scsi[0-9].*: .*3ware [0-9]* Storage Controller',
+                    dmesg, re.I):
                 return '3Ware'
         return ''
 
@@ -213,9 +216,9 @@ class SystemInfo(object):
     def _fetch_cpu_arch(self):
         if os.path.isfile('/proc/cpuinfo'):
             try:
-                with open(file, '/proc/cpuinfo') as content_file:
+                with open('/proc/cpuinfo', 'r') as content_file:
                     content = content_file.read()
-                    if re.search(' lm ', content):
+                    if re.search(r' lm ', content):
                         return '64-bit'
                     else:
                         return '32-bit'
@@ -265,6 +268,58 @@ class SystemInfo(object):
             return ''
 
     def _fetch_cpu_info(self):
-        shell = Shell('lscpu')
-        if shell.status == 0:
-            return shell.stdout
+        if os.path.isfile('/proc/cpuinfo'):
+            try:
+                with open('/proc/cpuinfo', 'r') as content_file:
+                    content = content_file.read()
+                    return content
+            except:
+                logging.error('Can\'t read /proc/cpuinfo')
+                return ''
+        else:
+            logging.error('Can\'t find /proc/cpuinfo')
+        return ''
+
+    def _parse_cpu_info(self, info):
+
+        def remove_duplicates(values):
+            output = []
+            seen = set()
+            for value in values:
+                if value not in seen:
+                    output.append(value)
+                    seen.add(value)
+            return output
+
+        def fetch_first(reg, info):
+            val = re.search(reg, info. re.M)
+            if val is not None:
+                return val.group(1)
+            else:
+                return 'N/A'
+
+        if info == '':
+            return {}
+
+        result = {}
+        result['virtual'] = len(
+            re.findall(r'(^|\n)processor', info))
+        result['physical'] = len(remove_duplicates(
+            re.findall(
+                r'^physical id\s+\:\s+(\d+)', info, re.M)))
+        cores = re.search(
+            r'^cpu cores\s+\:\s+(\d+)', info, re.M)
+        if cores is not None:
+            result['cores'] = int(cores.group(1))
+        else:
+            result['cores'] = 0
+        if result['physical'] == 0:
+            result['physical'] = result['virtual']
+        result['hyperthreading'] = False
+        if result['cores'] > 0:
+            if result['cores'] < result['virtual']:
+                result['hyperthreading'] = True
+        result['model'] = fetch_first(r'model name\s+\:\s+(.*)$', info)
+        result['cache'] = fetch_first(r'cache size\s+\:\s+(.*)$', info)
+        result['speed'] = fetch_first(r'^cpu MHz\s+\:\s+(\d+\.\d+)$', info)
+        return result
