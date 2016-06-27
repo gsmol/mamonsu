@@ -5,6 +5,7 @@ import time
 import logging
 import os
 import re
+import glob
 
 
 class Shell(object):
@@ -59,7 +60,8 @@ class SystemInfo(object):
         self.cpu_info = self._fetch_cpu_info()
         self.parsed_cpu_info = self._parse_cpu_info(self.cpu_info)
         self.meminfo = self._fetch_meminfo()
-        self.parsed_meminfo = self._parse_meminfo(self.meminfo)
+        self.parsed_meminfo = self._parse_meminfo(self.meminfo, self.sysctl)
+        self.disks = self._fetch_disk_info()
 
     _suffixes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 
@@ -363,7 +365,7 @@ class SystemInfo(object):
             logging.error('Can\'t find /proc/meminfo')
         return ''
 
-    def _parse_meminfo(self, data):
+    def _parse_meminfo(self, data, sysctl):
         if data == '':
             return {}
         result = {}
@@ -381,4 +383,28 @@ class SystemInfo(object):
         result['_DIRTY'] = ''
         if 'Dirty' in result:
             result['_DIRTY'] = self._humansize(result['Dirty'])
+        result['_SWAPPINESS']
+        if 'vm.swappiness' in sysctl:
+            result['_SWAPPINESS'] = sysctl['vm.swappiness']
         return result
+
+    def _fetch_disk_info(self):
+        result = {}
+        for block in glob.glob('/sys/block/*'):
+            data, disk = {}, block.replace('/sys/block/', '')
+            scheduler = '{0}/queue/scheduler'.format(block)
+            nr_requests = '{0}/queue/nr_requests'.format(block)
+            try:
+                if os.path.isfile(scheduler):
+                    data['scheduler'] = open(scheduler, 'r').read()
+                if os.path.isfile(nr_requests):
+                    data['nr_requests'] = open(nr_requests, 'r').read()
+                shell = Shell('fdisk -l /dev/{0}'.format(disk), sudo=True)
+                if shell.status == 0:
+                    data['fdisk'] = shell.stdout
+                else:
+                    logging.error(shell.error())
+                    data['fdisk'] = ''
+            except:
+                continue
+            result[disk] = data
