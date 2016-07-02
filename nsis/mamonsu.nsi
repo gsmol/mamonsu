@@ -1,11 +1,14 @@
 ; check binary and config already installed, if true -> do not show dialog, only replace exe file 
+; check if user exist
 ; allow user to choose user-name
+; create uninstall procedure
+
 
 ; Mamonsu install Script
 ; Written by Postgres Professional, Postgrespro.ru
 ; dba@postgrespro.ru
 ;--------------------------------
-#!include "mamonsu.def.nsh"
+!include "mamonsu.def.nsh"
 !include Utf8Converter.nsh
 !include MUI2.nsh
 !include LogicLib.nsh
@@ -14,20 +17,6 @@
 !include NSISpcre.nsh
 !insertmacro REMatches
 ;-------------------------------
-;------------------------------
-;macro
-!define NAME Mamonsu
-!define VERSION 0.4.1
-!define EDB_REG "SOFTWARE\Postgresql"
-!define PGPRO_REG_1C "SOFTWARE\Postgres Professional\PostgresPro 1C"
-!define PGPRO_REG_32 "SOFTWARE\PostgresPro\X86"
-!define PGPRO_REG_64 "SOFTWARE\PostgresPro\X64"
-!define USER "mamonsu"
-LangString PG_TITLE ${LANG_ENGLISH} "PostgreSQL"
-LangString PG_SUBTITLE ${LANG_ENGLISH} "Server options of PostgreSQL instance you want to monitor"
-
-LangString ZB_TITLE ${LANG_ENGLISH} "Zabbix"
-LangString ZB_SUBTITLE ${LANG_ENGLISH} "Server options of Zabbix"
 ;--------------------------------
 
 
@@ -68,6 +57,7 @@ Var zb_port
 Var zb_port_input
 Var zb_conf
 Var img_path
+Var hostname
 ;-----------------------------------------
 ;General
 RequestExecutionLevel admin
@@ -115,12 +105,17 @@ Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
 
   ;installation procedure
   ;check if user ${USER} exist, create if not
-  
-  UserMgr::CreateAccountEx "${USER}" "23109jdlksajlhuhf894jdYe" "${USER}" "${USER}" "${USER}" "UF_PASSWD_NOTREQD"
+  DetailPrint "Create user ..."
+  UserMgr::CreateAccountEx "${USER}" "${PASSWORD}" "${USER}" "${USER}" "${USER}" "UF_PASSWD_NOTREQD|UF_DONT_EXPIRE_PASSWD"
   Pop $0
   DetailPrint "CreateUser Result : $0"
-  MessageBox MB_OK "test"
+  MessageBox MB_OK "CreateUser Result : $0"
  
+  DetailPrint "Add privilege to user ..."
+  UserMgr::AddPrivilege "${USER}" "SeServiceLogonRight" 
+  Pop $0
+  DetailPrint "AddPrivilege Result: $0"
+  MessageBox MB_OK "AddPrivilege Result: $0"
 
   ;create file, write there user-defined stuff
   ${AnsiToUtf8} $pg_password $2
@@ -132,43 +127,40 @@ port = $zb_port$\r$\nbinary_log = None$\r$\n$\r$\n\
 host = $pg_host$\r$\nport = $pg_port$\r$\napplication_name = mamonsu$\r$\n'
    FileClose $0
 
-  Rename $1 "$INSTDIR\agent.conf"
+ Rename $1 "$INSTDIR\agent.conf"
 
-AccessControl::DisableFileInheritance "$INSTDIR"
-  Pop $0 ; "error" on errors
-  ;DetailPrint "Change file owner to ${USER} : $0"
-  MessageBox MB_OK "$0"
+ AccessControl::DisableFileInheritance "$INSTDIR"
+   Pop $0 ; "error" on errors
+   ;DetailPrint "Change file owner to ${USER} : $0"
+   MessageBox MB_OK "$0"
 
-;set directory ownership to ${USER}
-AccessControl::SetFileOwner "$INSTDIR" "${USER}"
-  Pop $0 ; "error" on errors
-  ;DetailPrint "Change file owner to ${USER} : $0"
-  MessageBox MB_OK "$0"
+ ;set directory ownership to ${USER}
+ AccessControl::SetFileOwner "$INSTDIR" "${USER}"
+   Pop $0 ; "error" on errors
+   ;DetailPrint "Change file owner to ${USER} : $0"
+   MessageBox MB_OK "$0"
 
-AccessControl::SetFileOwner "$INSTDIR\agent.exe" "${USER}"
-  Pop $0 ; "error" on errors
-  ;DetailPrint "Change file owner to ${USER} : $0"
-  MessageBox MB_OK "$0"
+ AccessControl::SetFileOwner "$INSTDIR\agent.exe" "${USER}"
+   Pop $0 ; "error" on errors
+   ;DetailPrint "Change file owner to ${USER} : $0"
+   MessageBox MB_OK "$0"
 
-AccessControl::SetFileOwner "$INSTDIR\agent.conf" "${USER}"
-  Pop $0 ; "error" on errors
-  ;DetailPrint "Change file owner to ${USER} : $0"
-  MessageBox MB_OK "$0"
+ AccessControl::SetFileOwner "$INSTDIR\agent.conf" "${USER}"
+   Pop $0 ; "error" on errors
+   ;DetailPrint "Change file owner to ${USER} : $0"
+   MessageBox MB_OK "$0"
 
-;revoke Users
-AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
-  Pop $0 ; "error" on errors
-  ;DetailPrint "Change file owner to ${USER} : $0"
-  MessageBox MB_OK "$0"
+ ;revoke Users
+ AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
+   Pop $0 ; "error" on errors
+   ;DetailPrint "Change file owner to ${USER} : $0"
+   MessageBox MB_OK "$0"
 
  ;create registry entry
-
- WriteRegExpandStr HKLM "Software\PostgresPro\Mamonsu" "Version" "${VERSION}"
- WriteRegExpandStr HKLM "Software\PostgresPro\Mamonsu" "User" "${USER}"
- WriteRegExpandStr HKLM "Software\PostgresPro\Mamonsu" "InstallDir" "${INSTDIR}"
- WriteRegExpandStr HKLM "Software\PostgresPro\Mamonsu" "ConfigFile" "${INSTDIR}\agent.conf"
-
+ Call CreateReg
  ;create service
+ Call CreateService
+
 SectionEnd
 
 
@@ -246,12 +238,8 @@ FunctionEnd
 Function CheckVarsZB
  ; check zabbix agent installation
  ReadRegStr $zb_client HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
+ ReadRegStr $hostname HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
  ReadRegStr $img_path HKLM "System\CurrentControlSet\Services\Zabbix Agent" "ImagePath"
-
- ;  !insertmacro CreateUser "\\$zb_client" "jdoe" "pkjqgbhj;tyrf1488" "Some User" "John" "Doe" 545
- ;  Pop $0
- ;  MessageBox MB_OK "$0"
-
 
  ${If} $img_path == ''
    ;MessageBox MB_OK "No zabbix agent instalation found"
@@ -414,4 +402,41 @@ Function InputDataZB
   ${NSD_GetText} $zb_port_input $zb_port
   ${NSD_GetText} $zb_client_input $zb_client
 
+FunctionEnd
+
+
+Function CreateReg
+ WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "Version" "${VERSION}"
+ WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "User" "${USER}"
+ WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "InstallDir" "$INSTDIR"
+ WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "ConfigFile" "$INSTDIR\agent.conf"
+FunctionEnd
+
+Function CreateService
+ DetailPrint "Checking service ..."
+ SimpleSC::ExistsService "${SERVICE_NAME}"
+ Pop $0
+ ${If} $0 != 0
+  DetailPrint "Result: service not present. Code $0"
+ ${Else}
+  DetailPrint "Result: service is already present"
+  Abort
+ ${EndIf}
+ 
+ DetailPrint "Creating service ..."
+ MessageBox MB_OK "$hostname"
+ ;SimpleSC::InstallService "${SERVICE_NAME}" "${SERVICE_DISPLAY_NAME}" "${SERVICE_TYPE}"\
+ ;"${SERVICE_START_TYPE}" "$INSTDIR\agent.exe -c $INSTDIR\agent.conf" "${SERVICE_DEPENDENCIES}"\
+ ;"${USER}" ""
+
+ SimpleSC::InstallService "${SERVICE_NAME}" "${SERVICE_DISPLAY_NAME}" "${SERVICE_TYPE}"\
+"${SERVICE_START_TYPE}" "$INSTDIR\agent.exe -c $INSTDIR\agent.conf" "${SERVICE_DEPENDENCIES}"\
+"$hostname\${USER}" "${PASSWORD}"
+ Pop $0
+ ${If} $0 != 0
+   MessageBox MB_OK "Failed to create service ${SERVICE_NAME}. Error code $0"
+   DetailPrint "Failed to create service ${SERVICE_NAME}. Error code $0"
+   Abort
+ ${EndIf}
+ SimpleSC::SetServiceDescription "${SERVICE_NAME}" "${SERVICE_DESCRIPTION}"
 FunctionEnd
