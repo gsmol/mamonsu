@@ -19,6 +19,9 @@
 !include nsDialogs.nsh
 !include TextFunc.nsh
 !include NSISpcre.nsh
+!include FileFunc.nsh
+!include TextFunc.nsh
+!include WordFunc.nsh
 !insertmacro REMatches
 ;-------------------------------
 ;--------------------------------
@@ -26,7 +29,7 @@
 
 Name "${NAME} ${VERSION}"
 OutFile "mamonsu.exe"
-InstallDir "$PROGRAMFILES32\${NAME}"
+InstallDir "$PROGRAMFILES32\PostgresPro\${NAME}\${VERSION}"
 BrandingText "Postgres Professional"
 
 
@@ -61,10 +64,13 @@ Var zb_port_input
 Var zb_conf
 Var img_path
 Var hostname
-Var reinstall
+Var action
 Var brand
 Var user_password
 Var user_not_exist
+Var ext_version
+Var ext_config
+Var ext_install_dir
 
 ;----------------------------------------
 
@@ -123,15 +129,17 @@ Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
  ;installation procedure
 
  ; stop service
- ${if} $reinstall == 'true'
+ ${if} $action != ''
    Call StopService
  ${endif}
- 
+
+ RMDir /r "$INSTDIR"
  SetOutPath "$INSTDIR" ; install binary to directory on target machine
  File "..\win\${VERSION}\service.exe" ; pick that file and pack it to installer
  File "..\win\${VERSION}\agent.exe" 
  WriteUninstaller "$INSTDIR\Uninstall.exe"
 
+MessageBox MB_OK "$INSTDIR"
  ;create user
  Call CreateUser
  ;create agent.conf
@@ -158,17 +166,29 @@ SectionEnd
 Function CheckMamonsu
  ; if we abort from this function, next Page will be skipped
  ;check registry
- SetRegView 64
- ReadRegStr $0 HKLM ${MAMONSU_REG_PATH} "ConfigFile"
+ SetRegView 32
+ ReadRegStr $0 HKLM "${MAMONSU_REG_PATH}" "ConfigFile"
   ${if} $0 != ''
-    ReadRegStr $1 HKLM "${MAMONSU_REG_PATH}" "Version"
-    ${if} ${FileExists} $0 ; if config file exist => reinstall
-      StrCpy $reinstall 'true'
-      MessageBox MB_YESNO  "Mamonsu version $1 is already installed. Continue?" IDYES continue IDNO quit
-      continue:
-      Abort
-      quit:
-      Quit
+    StrCpy $ext_config $0
+    ReadRegStr $ext_version HKLM "${MAMONSU_REG_PATH}" "Version"
+    ReadRegStr $ext_install_dir HKLM "${MAMONSU_REG_PATH}" "InstallDir"
+
+    ${if} ${FileExists} $0
+      ${VersionCompare} $ext_version ${VERSION} $0
+      ${if} $0 == 0
+       StrCpy $action 'reinstall'
+       MessageBox MB_YESNO  "Mamonsu version $ext_version is already installed. Continue?" IDYES continue IDNO quit
+      ${elseif} $0 == 1
+       StrCpy $action 'downgrade'
+       MessageBox MB_YESNO  "Mamonsu version $ext_version is already installed. Do you really want to downgrade?" IDYES continue IDNO quit
+      ${elseif} $0 == 2
+       StrCpy $action 'upgrade'
+      MessageBox MB_YESNO  "Mamonsu version $ext_version is already installed. Do want to upgrade?" IDYES continue IDNO quit
+      ${endif}
+       continue:
+       Abort
+       quit:
+       Quit
     ${endif}
   ${endif} 
 FunctionEnd
@@ -176,7 +196,7 @@ FunctionEnd
 
 Function CheckPG
  ; check EDB installation
- ${if} $reinstall == 'true'
+ ${if} $action != ''
  Abort
  ${endif}
 SetRegView 64
@@ -244,7 +264,7 @@ FunctionEnd
 
 Function CheckZB
  ; check zabbix agent installation
-  ${if} $reinstall == 'true'
+  ${if} $action != ''
  Abort
  ${endif}
  ReadRegStr $zb_client HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
@@ -278,7 +298,7 @@ FunctionEnd
 
 
 Function DefaultConf
- ${if} $reinstall == 'true'
+ ${if} $action != ''
  Abort
  ${endif}
 
@@ -294,6 +314,7 @@ ${If} $pg_datadir != ''
 ${EndIf}
 
 ${If} $pg_host == 'localhost'
+${OrIf} $pg_host == '*'
 ${OrIf} $pg_host == ''
   StrCpy $pg_host '127.0.0.1'
 ${EndIf}
@@ -309,6 +330,7 @@ StrCpy $pg_db $pg_user
 
 ; zabbix
 ${If} $zb_address == 'localhost'
+${OrIf} $zb_address == '*'
 ${OrIf} $zb_address == ''
   StrCpy $zb_address '127.0.0.1'
 ${EndIf}
@@ -320,7 +342,7 @@ FunctionEnd
 
 
 Function PG_Page
- ${if} $reinstall == 'true'
+ ${if} $action != ''
  Abort
  ${endif}
 
@@ -363,7 +385,7 @@ FunctionEnd
 
 
 Function InputData
- ${if} $reinstall == 'true'
+ ${if} $action != ''
  Abort
  ${endif}
 
@@ -380,7 +402,7 @@ FunctionEnd
 
 
 Function ZB_Page
- ${if} $reinstall == 'true'
+ ${if} $action != ''
  Abort
  ${endif}
 
@@ -412,7 +434,7 @@ FunctionEnd
 
 
 Function InputDataZB
- ${if} $reinstall == 'true'
+ ${if} $action != ''
  Abort
  ${endif}
 
@@ -431,13 +453,9 @@ Function CreateUser
     ; if user exist, but service is not, we must recreate user and create service
     ; ${if}
     goto cancel
-#    DetailPrint "Deleting existing user ..."
-#    UserMgr::DeleteAccount "${USER}"
-#    Pop $0
-#    DetailPrint "Result: $0"
   ${Else}
     DetailPrint "Result: do not exist"
-    ${if} $reinstall == 'true'
+    ${if} $action != ''
     StrCpy $user_not_exist 'true'
     ${endif}   
   ${EndIf}
@@ -465,20 +483,28 @@ Function CreateUser
 FunctionEnd
 
 Function CreateConfig
- ${if} $reinstall == 'true'
+;rewrite all regfiles and installed files
+;update service
+ ${if} $action == 'downgrade'
+ ${OrIf} $action == 'upgrade'
+   CopyFiles "$ext_config" "$INSTDIR"
+   RMDir /r "$ext_install_dir"
+   goto install
+ ${elseif} $action == 'reinstall'
  goto cancel
  ${endif}
-
+  
+  ;create config
   ${AnsiToUtf8} $pg_password $2
   GetTempFileName $1
-   FileOpen $0 $1 w
-   FileWrite $0 '[zabbix]$\r$\nclient = $zb_client$\r$\naddress = $zb_address$\r$\nport = $zb_port$\r$\nbinary_log = None$\r$\n$\r$\n\
+  FileOpen $0 $1 w
+  FileWrite $0 '[zabbix]$\r$\nclient = $zb_client$\r$\naddress = $zb_address$\r$\nport = $zb_port$\r$\nbinary_log = None$\r$\n$\r$\n\
 [postgres]$\r$\nuser = $pg_user$\r$\ndatabase = $pg_db$\r$\npassword = $2$\r$\n\
 host = $pg_host$\r$\nport = $pg_port$\r$\napplication_name = mamonsu$\r$\n'
-   FileClose $0
-
- Rename $1 "$INSTDIR\agent.conf"
-
+  FileClose $0
+  Rename $1 "$INSTDIR\agent.conf"
+ 
+ install:
  AccessControl::DisableFileInheritance "$INSTDIR"
  Pop $0 ; "error" on errors
 
@@ -499,15 +525,10 @@ host = $pg_host$\r$\nport = $pg_port$\r$\napplication_name = mamonsu$\r$\n'
  ;revoke Users
  AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
  Pop $0 ; "error" on errors
- cancel:   
+ cancel:
 FunctionEnd
 
 Function CreateReg
- ${if} $reinstall == 'true'
-   SetRegView 32
-   WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "Version" "${VERSION}"
-   goto cancel
- ${endif}
  SetRegView 32
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "Version" "${VERSION}"
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "User" "${USER}"
@@ -515,18 +536,17 @@ Function CreateReg
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "ConfigFile" "$INSTDIR\agent.conf"
 
  WriteRegExpandStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayName" "${NAME}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Publisher" "Postgres Professional"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "HelpLink" "http://github.com/postgrespro/mamonsu"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Comments" "Packaged by PostgresPro.ru"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UrlInfoAbout" "http://github.com/postgrespro/mamonsu"
-  cancel:
+ WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayName" "${NAME}"
+ WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+ WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayVersion" "${VERSION}"
+ WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Publisher" "Postgres Professional"
+ WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "HelpLink" "http://github.com/postgrespro/mamonsu"
+ WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Comments" "Packaged by PostgresPro.ru"
+ WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UrlInfoAbout" "http://github.com/postgrespro/mamonsu"
 FunctionEnd
 
 Function CreateService
- ${if} $reinstall == 'true'
+ ${if} $action != ''
    SimpleSC::ExistsService "${SERVICE_NAME}"
    Pop $0
    ${if} $0 == 0 ; service exist  
@@ -541,9 +561,25 @@ Function CreateService
         ${else}
           DetailPrint "Result RemoveService: error"
         ${endIf}
-     ${else} ; service exist but user was not recreated, so its ok to exit
-       DetailPrint "Service exist and user was not recreated, so its ok to use existing service"
-       goto cancel
+      ${else} ; service exist but user was not recreated, so its ok to exit
+        ${if} $action == 'upgrade'
+        ${OrIf} $action == 'downgrade'
+        DetailPrint "It`s upgrade/downgrade, service must be updated to reflect new path to binary"
+        DetailPrint "Updating service ..."
+        nsExec::ExecToStack /TIMEOUT=10000 '"$INSTDIR\service.exe" update'
+          Pop $0
+          Pop $1
+          ${if} $0 == 'error'
+          DetailPrint "Result: error"
+          DetailPrint "$1"
+          ${elseif} $0 == 0
+          DetailPrint "Result: ok"
+          ${endif}
+        goto cancel
+        ${elseif} $action == 'reinstall'
+        DetailPrint "Service exist and user was not recreated, so its ok to use existing service"
+        goto cancel
+        ${endif}
      ${endif}
     ${endif}
   ${endif} 
@@ -592,8 +628,11 @@ FunctionEnd
 ;----------------------------------------------
 ; Uninstall functions
 
-;Function un.CheckExist
-;FunctionEnd
+#Function un.CheckExist
+#  ${Unless} ${SectionIsSelected} ${sec1}
+#    Abort
+#  ${EndUnless}
+#FunctionEnd
 
 Function un.DeleteService
   DetailPrint "Stoping service mamonsu ..."
