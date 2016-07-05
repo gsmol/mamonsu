@@ -1,12 +1,11 @@
 !define NAME Mamonsu
-!define VERSION 0.4.1
-!define MAMONSU_REG_PATH "Software\PostgresPro\Mamonsu"
+!define VERSION 0.5.1
+!define MAMONSU_REG_PATH "Software\PGPRO\Mamonsu"
 !define EDB_REG "SOFTWARE\Postgresql"
 !define PGPRO_REG_1C "SOFTWARE\Postgres Professional\PostgresPro 1C"
 !define PGPRO_REG_32 "SOFTWARE\PostgresPro\X86"
 !define PGPRO_REG_64 "SOFTWARE\PostgresPro\X64"
 !define USER "mamonsu"
-!define PASSWORD "23109jdlksajlhuhf894jdY"
 
 !define SERVICE_NAME "mamonsu"
 !define SERVICE_DISPLAY_NAME "Zabbix monitoring agent: mamonsu"

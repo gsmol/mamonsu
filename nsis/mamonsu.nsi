@@ -1,8 +1,12 @@
-; check binary and config already installed, if true -> do not show dialog, only replace exe file 
-; check if user exist
-; allow user to choose user-name
-; create uninstall procedure
+;update procedure:
+; check binary and config already installed, if true -> do not show directory dialog, stop service, 
+; check that service is stopped, check version via registry, replace exe file, change registry key,
+; start service, check that service is started
 
+;write in registry only if installation successfull
+
+; create uninstall procedure
+; generate template and Inform User that he must import it in zabbix
 
 ; Mamonsu install Script
 ; Written by Postgres Professional, Postgrespro.ru
@@ -46,7 +50,6 @@ Var pg_password_input
 Var pg_version
 Var pg_datadir
 Var pg_service
-Var brand
 
 Var zb_client
 Var zb_client_input
@@ -58,120 +61,123 @@ Var zb_port_input
 Var zb_conf
 Var img_path
 Var hostname
-;-----------------------------------------
+Var reinstall
+Var brand
+Var user_password
+
+;----------------------------------------
+
+
 ;General
 RequestExecutionLevel admin
 
+
 !insertmacro MUI_PAGE_WELCOME ;need some some_file as argument
-;!insertmacro MUI_PAGE_LICENSE ;"License.txt"
-!insertmacro MUI_PAGE_COMPONENTS ; 
+!insertmacro MUI_PAGE_COMPONENTS 
+!define MUI_PAGE_CUSTOMFUNCTION_PRE CheckMamonsu ; Important!
 !insertmacro MUI_PAGE_DIRECTORY
 
-Page custom CheckVars ; check pre_ConfPage variables
-Page custom CheckVarsZB
+Page custom CheckPG ; check pre_ConfPage variables
+Page custom CheckZB
 Page custom DefaultConf
 Page custom PG_Page InputData ;+ ConfigurationPageLeave ; we must save them
 Page custom ZB_Page InputDataZB
 
-!insertmacro MUI_PAGE_STARTMENU Application $StartMenuDir ; we need 'Application' for desc
-;add READY to install
+;!insertmacro MUI_PAGE_STARTMENU Application $StartMenuDir ; we need 'Application' for desc
 !insertmacro MUI_PAGE_INSTFILES
+; Finish page
+!define MUI_FINISHPAGE_NOAUTOCLOSE
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "show config"
+!define MUI_FINISHPAGE_SHOWREADME "$INSTDIR\agent.conf"
 !insertmacro MUI_PAGE_FINISH
 
-;Lang
+
+!insertmacro MUI_UNPAGE_WELCOME
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!define MUI_UNFINISHPAGE_NOAUTOCLOSE
+!insertmacro MUI_UNPAGE_FINISH
+
 !insertmacro MUI_LANGUAGE "English"
-
-;!insertmacro MUI_UNPAGE_WELCOME
-;!insertmacro MUI_UNPAGE_CONFIRM
-;!insertmacro MUI_UNPAGE_INSTFILES
-;!insertmacro MUI_UNPAGE_FINISH
-
-
 ;-----------------------------------------------
+
+
 ;Sections 
 Section "Microsoft Visual C++ 2010 Redistibutable" sectionMS ; we need section number 1 for description
-  ;we install here tumtime to destination system
+ GetTempFileName $1
+ !ifdef PG_64bit
+    File /oname=$1 ".\vcredist\vcredist_x64_2010.exe"
+  !else
+    File /oname=$1 ".\vcredist\vcredist_x86_2010.exe"
+  !endif
+  ExecWait "$1  /passive /norestart" $0
+  DetailPrint "Visual C++ Redistributable Packages return $0"
+  Delete $1
 SectionEnd
 
 Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
-  SetOutPath "$INSTDIR" ; install binary to directory on target machine
-  File "agent.exe" ; pick that file and pack it to installer
  
-  ;StartMenu stuff
-  !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
-  CreateDirectory "$SMPROGRAMS\$StartMenuDir"
-  CreateShortcut "$SMPROGRAMS\$StartMenuDir\mamonsu.lnk" "$INSTDIR\agent.exe"
-  !insertmacro MUI_STARTMENU_WRITE_END
+  ;StartMenu stuff, need to create links to start/stop service
+#  !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
+#  CreateDirectory "$SMPROGRAMS\$StartMenuDir"
+#  CreateShortcut "$SMPROGRAMS\$StartMenuDir\mamonsu.lnk" "$INSTDIR\service.exe"
+#  !insertmacro MUI_STARTMENU_WRITE_END
 
-  ;installation procedure
-  ;check if user ${USER} exist, create if not
-  DetailPrint "Create user ..."
-  UserMgr::CreateAccountEx "${USER}" "${PASSWORD}" "${USER}" "${USER}" "${USER}" "UF_PASSWD_NOTREQD|UF_DONT_EXPIRE_PASSWD"
-  Pop $0
-  DetailPrint "CreateUser Result : $0"
-  MessageBox MB_OK "CreateUser Result : $0"
+ ;installation procedure
+
+ ; stop service
+ ${if} reinstall == 'true'
+   Call StopService
+ ${endif}
  
-  DetailPrint "Add privilege to user ..."
-  UserMgr::AddPrivilege "${USER}" "SeServiceLogonRight" 
-  Pop $0
-  DetailPrint "AddPrivilege Result: $0"
-  MessageBox MB_OK "AddPrivilege Result: $0"
+ SetOutPath "$INSTDIR" ; install binary to directory on target machine
+ File "..\win\${VERSION}\service.exe" ; pick that file and pack it to installer
+ File "..\win\${VERSION}\agent.exe" 
+ WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-  ;create file, write there user-defined stuff
-  ${AnsiToUtf8} $pg_password $2
-  GetTempFileName $1
-   FileOpen $0 $1 w
-   FileWrite $0 '[zabbix]$\r$\nclient = $zb_client$\r$\naddress = $zb_address$\r$\n\
-port = $zb_port$\r$\nbinary_log = None$\r$\n$\r$\n\
-[postgres]$\r$\nuser = $pg_user$\r$\ndatabase = $pg_db$\r$\npassword = $2$\r$\n\
-host = $pg_host$\r$\nport = $pg_port$\r$\napplication_name = mamonsu$\r$\n'
-   FileClose $0
-
- Rename $1 "$INSTDIR\agent.conf"
-
- AccessControl::DisableFileInheritance "$INSTDIR"
-   Pop $0 ; "error" on errors
-   ;DetailPrint "Change file owner to ${USER} : $0"
-   MessageBox MB_OK "$0"
-
- ;set directory ownership to ${USER}
- AccessControl::SetFileOwner "$INSTDIR" "${USER}"
-   Pop $0 ; "error" on errors
-   ;DetailPrint "Change file owner to ${USER} : $0"
-   MessageBox MB_OK "$0"
-
- AccessControl::SetFileOwner "$INSTDIR\agent.exe" "${USER}"
-   Pop $0 ; "error" on errors
-   ;DetailPrint "Change file owner to ${USER} : $0"
-   MessageBox MB_OK "$0"
-
- AccessControl::SetFileOwner "$INSTDIR\agent.conf" "${USER}"
-   Pop $0 ; "error" on errors
-   ;DetailPrint "Change file owner to ${USER} : $0"
-   MessageBox MB_OK "$0"
-
- ;revoke Users
- AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
-   Pop $0 ; "error" on errors
-   ;DetailPrint "Change file owner to ${USER} : $0"
-   MessageBox MB_OK "$0"
-
- ;create registry entry
- Call CreateReg
+ ;create user
+ Call CreateUser
+ ;create agent.conf
+ Call CreateConfig
  ;create service
  Call CreateService
-
+ ;create mamonsu registry entry 
+ Call CreateReg
+ ;start service
+ Call StartService
 SectionEnd
 
-
-
+Section "Uninstall"
+;  Call un.CheckExist
+  Call un.DeleteService
+  Call un.DeleteUser
+  RMDir /r "$INSTDIR"
+  Call un.DeleteReg 
+SectionEnd
 
 ;------------------------------------------
 ;Functions
 
-Function CheckVars
+Function CheckMamonsu
+ ; if we abort from this function, next Page will be skipped
+ ;check registry
+ ReadRegStr $0 HKLM "${MAMONSU_REG_PATH}" "Version"
+  ${if} $0 != ''
+    MessageBox MB_OK "mamonsu version $0 is already installed"
+    ReadRegStr $1 HKLM "${MAMONSU_REG_PATH}" "ConfigFile"
+    ${if} ${FileExists} $1 ; if config file exist => reinstall
+      StrCpy $reinstall 'true'
+      Abort
+    ${endif}
+  ${endif} 
+FunctionEnd
 
-; check EDB installation
+
+Function CheckPG
+ ; check EDB installation
+ ${if} $reinstall == 'true'
+ Abort
+ ${endif}
 SetRegView 64
 EnumRegKey $1 HKLM "${EDB_REG}\Installations" 0
 ${If} $1 != ''
@@ -235,8 +241,11 @@ ${EndIf}
 FunctionEnd
 
 
-Function CheckVarsZB
+Function CheckZB
  ; check zabbix agent installation
+  ${if} $reinstall == 'true'
+ Abort
+ ${endif}
  ReadRegStr $zb_client HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
  ReadRegStr $hostname HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
  ReadRegStr $img_path HKLM "System\CurrentControlSet\Services\Zabbix Agent" "ImagePath"
@@ -271,6 +280,9 @@ FunctionEnd
 
 
 Function DefaultConf
+ ${if} $reinstall == 'true'
+ Abort
+ ${endif}
 
 ${If} $brand == ''
  ; MessageBox MB_OK "Failed to locate installed PostgreSQL"
@@ -300,7 +312,6 @@ ${If} $pg_user == ''
 ${EndIf}
 
 StrCpy $pg_db $pg_user
-;MessageBox MB_OK "$pg_port $pg_user $pg_version $pg_datadir $brand $pg_service $zb_client"
 
 ; zabbix
 ${If} $zb_address == 'localhost'
@@ -313,7 +324,11 @@ ${If} $zb_port == ''
 ${EndIf}
 FunctionEnd
 
+
 Function PG_Page
+ ${if} $reinstall == 'true'
+ Abort
+ ${endif}
 
   !insertmacro MUI_HEADER_TEXT $(PG_TITLE) $(PG_SUBTITLE)
   nsDialogs::Create 1018
@@ -354,6 +369,9 @@ FunctionEnd
 
 
 Function InputData
+ ${if} $reinstall == 'true'
+ Abort
+ ${endif}
 
   ${NSD_GetText} $pg_host_input $pg_host
   ${NSD_GetText} $pg_port_input $pg_port
@@ -363,12 +381,14 @@ Function InputData
 
 ${If} $pg_password = ''
 StrCpy $pg_password 'None' 
-${EndIf}
-  
+${EndIf}  
 FunctionEnd
 
 
 Function ZB_Page
+ ${if} $reinstall == 'true'
+ Abort
+ ${endif}
 
   !insertmacro MUI_HEADER_TEXT $(ZB_TITLE) $(ZB_SUBTITLE)
   nsDialogs::Create 1018
@@ -392,51 +412,213 @@ Function ZB_Page
   Pop $Label
   ${NSD_CreateText}  65u 40u 100u 12u "$zb_client"
   Pop $zb_client_input
-   
+
   nsDialogs::Show
 FunctionEnd
 
 
 Function InputDataZB
+ ${if} $reinstall == 'true'
+ Abort
+ ${endif}
+
   ${NSD_GetText} $zb_address_input $zb_address
   ${NSD_GetText} $zb_port_input $zb_port
   ${NSD_GetText} $zb_client_input $zb_client
-
 FunctionEnd
 
 
+Function CreateUser
+  DetailPrint "Checking user ..."  
+  UserMgr::GetUserInfo "${USER}" "EXISTS"
+  Pop $0
+  ${If} $0 == 'OK'
+    DetailPrint "Result: exist"
+    ; if user exist, but service is not, we must recreate user and create service
+    ; ${if}
+    Abort
+#    DetailPrint "Deleting existing user ..."
+#    UserMgr::DeleteAccount "${USER}"
+#    Pop $0
+#    DetailPrint "Result: $0"
+  ${Else}
+    DetailPrint "Result: do not exist"
+  ${EndIf}
+
+  ; generate entropy
+  pwgen::GeneratePassword 32
+  Pop $0
+  StrCpy $user_password $0
+  
+  DetailPrint "Create user ..."
+  UserMgr::CreateAccountEx "${USER}" "$user_password" "${USER}" "${USER}" "${USER}" "UF_PASSWD_NOTREQD|UF_DONT_EXPIRE_PASSWD"
+  Pop $0
+  DetailPrint "CreateUser Result : $0"
+
+  DetailPrint "Add privilege to user ..."
+  UserMgr::AddPrivilege "${USER}" "SeServiceLogonRight"
+  Pop $0
+  DetailPrint "AddPrivilege Result: $0"
+
+  DetailPrint "Add user ${USER} to Performance Logs User Group ..."
+  UserMgr::AddToGroup "${USER}" "Performance Log Users" ; Performance Logs User Group to collect cpu/memory metrics
+  Pop $0
+  DetailPrint "AddToGroup Result: $0"
+FunctionEnd
+
+Function CreateConfig
+ ${if} $reinstall == 'true'
+ Abort
+ ${endif}
+
+  ${AnsiToUtf8} $pg_password $2
+  GetTempFileName $1
+   FileOpen $0 $1 w
+   FileWrite $0 '[zabbix]$\r$\nclient = $zb_client$\r$\naddress = $zb_address$\r$\nport = $zb_port$\r$\nbinary_log = None$\r$\n$\r$\n\
+[postgres]$\r$\nuser = $pg_user$\r$\ndatabase = $pg_db$\r$\npassword = $2$\r$\n\
+host = $pg_host$\r$\nport = $pg_port$\r$\napplication_name = mamonsu$\r$\n'
+   FileClose $0
+
+ Rename $1 "$INSTDIR\agent.conf"
+
+ AccessControl::DisableFileInheritance "$INSTDIR"
+   Pop $0 ; "error" on errors
+
+ ;set directory ownership to ${USER}
+ AccessControl::SetFileOwner "$INSTDIR" "${USER}"
+   Pop $0 ; "error" on errors
+   DetailPrint "Change file owner to ${USER} : $0"
+ AccessControl::GrantOnFile "$INSTDIR" "(S-1-3-0)" "FullAccess" ; S-1-3-0 - owner
+
+ AccessControl::SetFileOwner "$INSTDIR\service.exe" "${USER}"
+   Pop $0 ; "error" on errors
+ AccessControl::GrantOnFile "$INSTDIR\service.exe" "(S-1-3-0)" "FullAccess"
+
+ AccessControl::SetFileOwner "$INSTDIR\agent.conf" "${USER}"
+   Pop $0 ; "error" on errors
+ AccessControl::GrantOnFile "$INSTDIR\agent.conf" "(S-1-3-0)" "FullAccess"
+
+ ;revoke Users
+ AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
+   Pop $0 ; "error" on errors
+   
+FunctionEnd
+
 Function CreateReg
+ ${if} $reinstall == 'true'
+   WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "Version" "${VERSION}"
+   Abort
+ ${endif}
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "Version" "${VERSION}"
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "User" "${USER}"
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "InstallDir" "$INSTDIR"
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "ConfigFile" "$INSTDIR\agent.conf"
+
+ WriteRegExpandStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayName" "${NAME}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Publisher" "Postgres Professional"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "HelpLink" "http://github.com/postgrespro/mamonsu"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Comments" "Packaged by PostgresPro.ru"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UrlInfoAbout" "http://github.com/postgrespro/mamonsu"
 FunctionEnd
 
 Function CreateService
- DetailPrint "Checking service ..."
- SimpleSC::ExistsService "${SERVICE_NAME}"
- Pop $0
- ${If} $0 != 0
-  DetailPrint "Result: service not present. Code $0"
- ${Else}
-  DetailPrint "Result: service is already present"
-  Abort
- ${EndIf}
- 
- DetailPrint "Creating service ..."
- MessageBox MB_OK "$hostname"
- ;SimpleSC::InstallService "${SERVICE_NAME}" "${SERVICE_DISPLAY_NAME}" "${SERVICE_TYPE}"\
- ;"${SERVICE_START_TYPE}" "$INSTDIR\agent.exe -c $INSTDIR\agent.conf" "${SERVICE_DEPENDENCIES}"\
- ;"${USER}" ""
-
- SimpleSC::InstallService "${SERVICE_NAME}" "${SERVICE_DISPLAY_NAME}" "${SERVICE_TYPE}"\
-"${SERVICE_START_TYPE}" "$INSTDIR\agent.exe -c $INSTDIR\agent.conf" "${SERVICE_DEPENDENCIES}"\
-"$hostname\${USER}" "${PASSWORD}"
- Pop $0
- ${If} $0 != 0
-   MessageBox MB_OK "Failed to create service ${SERVICE_NAME}. Error code $0"
-   DetailPrint "Failed to create service ${SERVICE_NAME}. Error code $0"
+ ${if} $reinstall == 'true'
+   ; check that service exist
+   DetailPrint "Service already exist"
    Abort
- ${EndIf}
- SimpleSC::SetServiceDescription "${SERVICE_NAME}" "${SERVICE_DESCRIPTION}"
+ ${endif} 
+ DetailPrint "Creating service ${SERVICE_NAME} ... "
+ DetailPrint '"$INSTDIR\service.exe" --username "$hostname\${USER}" --password "$user_password" --startup delayed install"'
+ nsExec::ExecToStack /TIMEOUT=10000 '"$INSTDIR\service.exe" --username "$hostname\${USER}" --password "$user_password" --startup delayed install'
+ Pop $0
+ Pop $1
+ ${if} $0 == 'error'
+   DetailPrint "Result: error"
+   DetailPrint "$1"
+ ${elseif} $0 == 0
+   DetailPrint "Result: ok"
+ ${endif}
+FunctionEnd
+
+Function StopService
+ DetailPrint "Stoping service ${SERVICE_NAME} ... "
+ nsExec::Exec /TIMEOUT=10000 'net stop mamonsu'
+ Pop $0
+ DetailPrint "Result: $0"
+FunctionEnd
+ 
+Function StartService
+ DetailPrint "Starting service ${SERVICE_NAME} ... "
+ nsExec::ExecToStack /TIMEOUT=10000 'net start mamonsu'
+ Pop $0
+ Pop $1
+
+ ${if} $0 == 'timeout'
+   DetailPrint "Result: $0"  
+ ${elseif} $0 == 0
+   DetailPrint "Result: ok"
+ ${elseif} $0 == 'error'
+   DetailPrint "Result: $0"
+   DetailPrint "$1"
+${endif}
+FunctionEnd
+;----------------------------------------------
+; Uninstall functions
+
+;Function un.CheckExist
+;FunctionEnd
+
+Function un.DeleteService
+  DetailPrint "Stoping service mamonsu ..."
+  nsExec::ExecToStack /TIMEOUT=10000  'net stop mamonsu'
+  Pop $0
+  Pop $1
+  ${if} $0 == 0
+   DetailPrint "Result: ok"  
+  ${elseif} $0 == 'timeout'
+   DetailPrint "Result: $0"
+   Abort
+  ${elseif} $0 == 'error'
+   DetailPrint "Result: $0"
+   DetailPrint "$1"
+   Abort
+  ${endif}
+
+  ;remove
+  DetailPrint "Removing service mamonsu ..."
+  nsExec::ExecToStack '"$INSTDIR\service.exe" remove'
+  Pop $0
+  Pop $1
+  ${if} $0 == 0
+    DetailPrint "Result: ok"  
+  ${elseif} $0 == 'timeout'
+    DetailPrint "Result: $0"
+    Abort
+  ${elseif} $0 == 'error'
+    DetailPrint "Result: $0"
+    DetailPrint "$1"
+    Abort
+  ${endif}
+FunctionEnd
+
+Function un.DeleteUser
+  DetailPrint "Delete user ${USER} ..."
+  UserMgr::DeleteAccount "${USER}"
+  Pop $0
+  DetailPrint "DeleteUser Result : $0"
+FunctionEnd  
+
+Function un.DeleteReg
+DetailPrint "Delete registry entry ..."
+DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}"
+DeleteRegKey /ifempty HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}"
+SetRegView 64
+DeleteRegKey HKLM "${MAMONSU_REG_PATH}"
+DeleteRegKey /ifempty HKLM "${MAMONSU_REG_PATH}"
+SetRegView 32
+DeleteRegKey HKLM "${MAMONSU_REG_PATH}"
+DeleteRegKey /ifempty HKLM "${MAMONSU_REG_PATH}"
 FunctionEnd
