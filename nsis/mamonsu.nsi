@@ -26,7 +26,7 @@
 
 Name "${NAME} ${VERSION}"
 OutFile "mamonsu.exe"
-InstallDir "C:\mamonsu"
+InstallDir "$PROGRAMFILES32\${NAME}"
 BrandingText "Postgres Professional"
 
 
@@ -518,7 +518,7 @@ Function CreateReg
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayName" "${NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Publisher" "Postgres Professional"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Publisher" "$BrandingText"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "HelpLink" "http://github.com/postgrespro/mamonsu"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Comments" "Packaged by PostgresPro.ru"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UrlInfoAbout" "http://github.com/postgrespro/mamonsu"
