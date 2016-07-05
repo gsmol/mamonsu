@@ -106,9 +106,9 @@ Page custom ZB_Page InputDataZB
 Section "Microsoft Visual C++ 2010 Redistibutable" sectionMS ; we need section number 1 for description
  GetTempFileName $1
  !ifdef PG_64bit
-    File /oname=$1 ".\vcredist\vcredist_x64_2010.exe"
+    File /oname=$1 "vcredist\vcredist_x64_2010.exe"
   !else
-    File /oname=$1 ".\vcredist\vcredist_x86_2010.exe"
+    File /oname=$1 "vcredist\vcredist_x86_2010.exe"
   !endif
   ExecWait "$1  /passive /norestart" $0
   DetailPrint "Visual C++ Redistributable Packages return $0"
