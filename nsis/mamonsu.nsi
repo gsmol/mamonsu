@@ -133,10 +133,10 @@ Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
    Call StopService
  ${endif}
 
- RMDir /r "$INSTDIR"
  SetOutPath "$INSTDIR" ; install binary to directory on target machine
  File "..\win\${VERSION}\service.exe" ; pick that file and pack it to installer
- File "..\win\${VERSION}\agent.exe" 
+ File "..\win\${VERSION}\agent.exe"
+ File "..\win\${VERSION}\template.xml"
  WriteUninstaller "$INSTDIR\Uninstall.exe"
 
 MessageBox MB_OK "$INSTDIR"
@@ -156,7 +156,9 @@ Section "Uninstall"
 ;  Call un.CheckExist
   Call un.DeleteService
   Call un.DeleteUser
-  RMDir /r "$INSTDIR"
+  Delete /r "$INSTDIR\agent.conf"
+  Delete /r "$INSTDIR\agent.exe"
+  Delete /r "$INSTDIR\service.exe"
   Call un.DeleteReg 
 SectionEnd
 
@@ -488,7 +490,6 @@ Function CreateConfig
  ${if} $action == 'downgrade'
  ${OrIf} $action == 'upgrade'
    CopyFiles "$ext_config" "$INSTDIR"
-   RMDir /r "$ext_install_dir"
    goto install
  ${elseif} $action == 'reinstall'
  goto cancel
