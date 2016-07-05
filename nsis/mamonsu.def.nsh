@@ -1,5 +1,5 @@
 !define NAME Mamonsu
-!define VERSION 0.5.1
+!define VERSION 0.4.1
 !define MAMONSU_REG_PATH "Software\PGPRO\Mamonsu"
 !define EDB_REG "SOFTWARE\Postgresql"
 !define PGPRO_REG_1C "SOFTWARE\Postgres Professional\PostgresPro 1C"
