@@ -64,6 +64,7 @@ Var hostname
 Var reinstall
 Var brand
 Var user_password
+Var user_not_exist
 
 ;----------------------------------------
 
@@ -105,11 +106,7 @@ Page custom ZB_Page InputDataZB
 ;Sections 
 Section "Microsoft Visual C++ 2010 Redistibutable" sectionMS ; we need section number 1 for description
  GetTempFileName $1
- !ifdef PG_64bit
-    File /oname=$1 "vcredist\vcredist_x64_2010.exe"
-  !else
-    File /oname=$1 "vcredist\vcredist_x86_2010.exe"
-  !endif
+  File /oname=$1 vcredist\vcredist_x86_2010.exe
   ExecWait "$1  /passive /norestart" $0
   DetailPrint "Visual C++ Redistributable Packages return $0"
   Delete $1
@@ -126,7 +123,7 @@ Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
  ;installation procedure
 
  ; stop service
- ${if} reinstall == 'true'
+ ${if} $reinstall == 'true'
    Call StopService
  ${endif}
  
@@ -161,13 +158,17 @@ SectionEnd
 Function CheckMamonsu
  ; if we abort from this function, next Page will be skipped
  ;check registry
- ReadRegStr $0 HKLM "${MAMONSU_REG_PATH}" "Version"
+ SetRegView 64
+ ReadRegStr $0 HKLM ${MAMONSU_REG_PATH} "ConfigFile"
   ${if} $0 != ''
-    MessageBox MB_OK "mamonsu version $0 is already installed"
-    ReadRegStr $1 HKLM "${MAMONSU_REG_PATH}" "ConfigFile"
-    ${if} ${FileExists} $1 ; if config file exist => reinstall
+    ReadRegStr $1 HKLM "${MAMONSU_REG_PATH}" "Version"
+    ${if} ${FileExists} $0 ; if config file exist => reinstall
       StrCpy $reinstall 'true'
+      MessageBox MB_YESNO  "Mamonsu version $1 is already installed. Continue?" IDYES continue IDNO quit
+      continue:
       Abort
+      quit:
+      Quit
     ${endif}
   ${endif} 
 FunctionEnd
@@ -255,14 +256,11 @@ Function CheckZB
    Abort
  ${EndIf}
 
- MessageBox MB_OK "$img_path"
  StrCpy $0 ''
  StrCpy $1 ''
  ${RECaptureMatches} $0 '^.* --config \"(.+.conf)\"(.*)?' $img_path 1 ; 1 - partial string match
  Pop $1
  StrCpy $zb_conf $1
- ;MessageBox MB_OK "$zb_conf"
-
 
  StrCpy $0 ''
  StrCpy $1 ''
@@ -283,10 +281,6 @@ Function DefaultConf
  ${if} $reinstall == 'true'
  Abort
  ${endif}
-
-${If} $brand == ''
- ; MessageBox MB_OK "Failed to locate installed PostgreSQL"
-${EndIf}
 
 StrCpy $0 ''
 StrCpy $1 ''
@@ -436,13 +430,16 @@ Function CreateUser
     DetailPrint "Result: exist"
     ; if user exist, but service is not, we must recreate user and create service
     ; ${if}
-    Abort
+    goto cancel
 #    DetailPrint "Deleting existing user ..."
 #    UserMgr::DeleteAccount "${USER}"
 #    Pop $0
 #    DetailPrint "Result: $0"
   ${Else}
     DetailPrint "Result: do not exist"
+    ${if} $reinstall == 'true'
+    StrCpy $user_not_exist 'true'
+    ${endif}   
   ${EndIf}
 
   ; generate entropy
@@ -464,11 +461,12 @@ Function CreateUser
   UserMgr::AddToGroup "${USER}" "Performance Log Users" ; Performance Logs User Group to collect cpu/memory metrics
   Pop $0
   DetailPrint "AddToGroup Result: $0"
+  cancel:
 FunctionEnd
 
 Function CreateConfig
  ${if} $reinstall == 'true'
- Abort
+ goto cancel
  ${endif}
 
   ${AnsiToUtf8} $pg_password $2
@@ -482,33 +480,35 @@ host = $pg_host$\r$\nport = $pg_port$\r$\napplication_name = mamonsu$\r$\n'
  Rename $1 "$INSTDIR\agent.conf"
 
  AccessControl::DisableFileInheritance "$INSTDIR"
-   Pop $0 ; "error" on errors
+ Pop $0 ; "error" on errors
 
  ;set directory ownership to ${USER}
  AccessControl::SetFileOwner "$INSTDIR" "${USER}"
-   Pop $0 ; "error" on errors
-   DetailPrint "Change file owner to ${USER} : $0"
+ Pop $0 ; "error" on errors
+ DetailPrint "Change file owner to ${USER} : $0"
  AccessControl::GrantOnFile "$INSTDIR" "(S-1-3-0)" "FullAccess" ; S-1-3-0 - owner
 
  AccessControl::SetFileOwner "$INSTDIR\service.exe" "${USER}"
-   Pop $0 ; "error" on errors
+ Pop $0 ; "error" on errors
  AccessControl::GrantOnFile "$INSTDIR\service.exe" "(S-1-3-0)" "FullAccess"
 
  AccessControl::SetFileOwner "$INSTDIR\agent.conf" "${USER}"
-   Pop $0 ; "error" on errors
+ Pop $0 ; "error" on errors
  AccessControl::GrantOnFile "$INSTDIR\agent.conf" "(S-1-3-0)" "FullAccess"
 
  ;revoke Users
  AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
-   Pop $0 ; "error" on errors
-   
+ Pop $0 ; "error" on errors
+ cancel:   
 FunctionEnd
 
 Function CreateReg
  ${if} $reinstall == 'true'
+   SetRegView 32
    WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "Version" "${VERSION}"
-   Abort
+   goto cancel
  ${endif}
+ SetRegView 32
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "Version" "${VERSION}"
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "User" "${USER}"
  WriteRegExpandStr HKLM "${MAMONSU_REG_PATH}" "InstallDir" "$INSTDIR"
@@ -518,18 +518,35 @@ Function CreateReg
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayName" "${NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Publisher" "$BrandingText"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Publisher" "Postgres Professional"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "HelpLink" "http://github.com/postgrespro/mamonsu"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "Comments" "Packaged by PostgresPro.ru"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}" "UrlInfoAbout" "http://github.com/postgrespro/mamonsu"
+  cancel:
 FunctionEnd
 
 Function CreateService
  ${if} $reinstall == 'true'
-   ; check that service exist
-   DetailPrint "Service already exist"
-   Abort
- ${endif} 
+   SimpleSC::ExistsService "${SERVICE_NAME}"
+   Pop $0
+   ${if} $0 == 0 ; service exist  
+     DetailPrint "Service already exist"
+      ${if} $user_not_exist == 'true' ; service exist and user was recreated, we forced to drop and recreate service
+       DetailPrint "User was recreated so we forced to recreate service"
+       DetailPrint "Removing service ..."
+       SimpleSC::RemoveService "${SERVICE_NAME}"
+       Pop $0 
+        ${if} $0 == 0 ; service deleted
+          DetailPrint "Result RemoveService: ok"
+        ${else}
+          DetailPrint "Result RemoveService: error"
+        ${endIf}
+     ${else} ; service exist but user was not recreated, so its ok to exit
+       DetailPrint "Service exist and user was not recreated, so its ok to use existing service"
+       goto cancel
+     ${endif}
+    ${endif}
+  ${endif} 
  DetailPrint "Creating service ${SERVICE_NAME} ... "
  DetailPrint '"$INSTDIR\service.exe" --username "$hostname\${USER}" --password "$user_password" --startup delayed install"'
  nsExec::ExecToStack /TIMEOUT=10000 '"$INSTDIR\service.exe" --username "$hostname\${USER}" --password "$user_password" --startup delayed install'
@@ -541,13 +558,20 @@ Function CreateService
  ${elseif} $0 == 0
    DetailPrint "Result: ok"
  ${endif}
+ cancel:
 FunctionEnd
 
 Function StopService
  DetailPrint "Stoping service ${SERVICE_NAME} ... "
- nsExec::Exec /TIMEOUT=10000 'net stop mamonsu'
+ nsExec::ExecToStack /TIMEOUT=10000 'net stop mamonsu'
  Pop $0
- DetailPrint "Result: $0"
+ Pop $1
+ ${if} $0 == 'error'
+   DetailPrint "Result: error"
+   DetailPrint "$1"
+ ${elseif} $0 == 0
+   DetailPrint "Result: ok"
+ ${endif}
 FunctionEnd
  
 Function StartService
@@ -563,7 +587,7 @@ Function StartService
  ${elseif} $0 == 'error'
    DetailPrint "Result: $0"
    DetailPrint "$1"
-${endif}
+ ${endif}
 FunctionEnd
 ;----------------------------------------------
 ; Uninstall functions
@@ -613,12 +637,10 @@ FunctionEnd
 
 Function un.DeleteReg
 DetailPrint "Delete registry entry ..."
+SetRegView 32
 DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}"
 DeleteRegKey /ifempty HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${NAME}"
-SetRegView 64
-DeleteRegKey HKLM "${MAMONSU_REG_PATH}"
-DeleteRegKey /ifempty HKLM "${MAMONSU_REG_PATH}"
-SetRegView 32
+
 DeleteRegKey HKLM "${MAMONSU_REG_PATH}"
 DeleteRegKey /ifempty HKLM "${MAMONSU_REG_PATH}"
 FunctionEnd
