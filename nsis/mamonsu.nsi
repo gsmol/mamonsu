@@ -139,7 +139,6 @@ Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
  File "..\win\${VERSION}\template.xml"
  WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-MessageBox MB_OK "$INSTDIR"
  ;create user
  Call CreateUser
  ;create agent.conf
@@ -156,9 +155,10 @@ Section "Uninstall"
 ;  Call un.CheckExist
   Call un.DeleteService
   Call un.DeleteUser
-  Delete /r "$INSTDIR\agent.conf"
-  Delete /r "$INSTDIR\agent.exe"
-  Delete /r "$INSTDIR\service.exe"
+  Delete "$INSTDIR\agent.conf"
+  Delete "$INSTDIR\agent.exe"
+  Delete "$INSTDIR\service.exe"
+  RMDir "$INSTDIR"
   Call un.DeleteReg 
 SectionEnd
 
@@ -266,15 +266,15 @@ FunctionEnd
 
 Function CheckZB
  ; check zabbix agent installation
-  ${if} $action != ''
- Abort
+ ${if} $action != ''
+   Abort
  ${endif}
- ReadRegStr $zb_client HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
+
  ReadRegStr $hostname HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
  ReadRegStr $img_path HKLM "System\CurrentControlSet\Services\Zabbix Agent" "ImagePath"
 
  ${If} $img_path == ''
-   ;MessageBox MB_OK "No zabbix agent instalation found"
+   ;No zabbix agent instalation found
    Abort
  ${EndIf}
 
@@ -284,18 +284,28 @@ Function CheckZB
  Pop $1
  StrCpy $zb_conf $1
 
- StrCpy $0 ''
- StrCpy $1 ''
- StrCpy $2 ''
  ${ConfigRead} "$zb_conf" "ServerActive=" $zb_host
- ${RECaptureMatches} $0 "([a-z0-9.]+):?(\d+)?" $zb_host 0 ; 0 - full string match
- ${If} $0 == 'false'
-   Abort
+ ${RECaptureMatches} $0 "([A-Za-z0-9_-.]+):?(\d+)?" $zb_host 0 ; 0 - full string match
+ ${If} $0 == 'true'
+   Pop $1
+   Pop $2
+   StrCpy $zb_address $1
+   StrCpy $zb_port $2
+  ${else}
+   goto zb_client
  ${EndIf}
- Pop $1
- Pop $2
- StrCpy $zb_address $1
- StrCpy $zb_port $2
+
+ zb_client:
+ ${ConfigRead} "$zb_conf" "Hostname=" $zb_client
+ MessageBox MB_OK "$zb_client"
+ ${RECaptureMatches} $0 "(.*)" $zb_client 0 
+  ${if} $0 == 'true'
+   Pop $1
+   MessageBox MB_OK "$1"
+   StrCpy $zb_client $1
+  ${else}
+   StrCpy $zb_client $hostname
+  ${endIf}
 FunctionEnd
 
 
@@ -397,7 +407,7 @@ Function InputData
   ${NSD_GetText} $pg_db_input $pg_db
   ${NSD_GetText} $pg_password_input $pg_password
 
-${If} $pg_password = ''
+${If} $pg_password == ''
 StrCpy $pg_password 'None' 
 ${EndIf}  
 FunctionEnd
@@ -499,9 +509,9 @@ Function CreateConfig
   ${AnsiToUtf8} $pg_password $2
   GetTempFileName $1
   FileOpen $0 $1 w
-  FileWrite $0 '[zabbix]$\r$\nclient = $zb_client$\r$\naddress = $zb_address$\r$\nport = $zb_port$\r$\nbinary_log = None$\r$\n$\r$\n\
-[postgres]$\r$\nuser = $pg_user$\r$\ndatabase = $pg_db$\r$\npassword = $2$\r$\n\
-host = $pg_host$\r$\nport = $pg_port$\r$\napplication_name = mamonsu$\r$\n'
+  FileWrite $0 '[zabbix]$\r$\nclient = $zb_client$\r$\naddress = $zb_address$\r$\nport = $zb_port$\r$\n$\r$\n\
+[postgres]$\r$\nuser = $pg_user$\r$\ndatabase = $pg_db$\r$\npassword = $2$\r$\nhost = $pg_host$\r$\nport = $pg_port$\r$\n$\r$\n\
+[log]$\r$\nfile = $INSTDIR\mamonsu.log$\r$\nlevel = INFO$\r$\n'
   FileClose $0
   Rename $1 "$INSTDIR\agent.conf"
  
