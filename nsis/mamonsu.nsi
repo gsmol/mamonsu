@@ -29,12 +29,12 @@
 
 Name "${NAME} ${VERSION}"
 OutFile "mamonsu.exe"
-InstallDir "$PROGRAMFILES32\PostgresPro\${NAME}\${VERSION}"
+InstallDir "$PROGRAMFILES\PostgresPro\${NAME}\${VERSION}"
 BrandingText "Postgres Professional"
 
 
 ;--------------------
-Var StartMenuDir
+;Var StartMenuDir
 ;--------------------
 
 Var Dialog
@@ -62,6 +62,7 @@ Var zb_address_input
 Var zb_port
 Var zb_port_input
 Var zb_conf
+Var log_dir
 Var img_path
 Var hostname
 Var action
@@ -84,11 +85,19 @@ RequestExecutionLevel admin
 !define MUI_PAGE_CUSTOMFUNCTION_PRE CheckMamonsu ; Important!
 !insertmacro MUI_PAGE_DIRECTORY
 
-Page custom CheckPG ; check pre_ConfPage variables
-Page custom CheckZB
+
+Page custom CheckPG ; collect postgresql data
+Page custom CheckZB ; collect zabbix data
 Page custom DefaultConf
 Page custom PG_Page InputData ;+ ConfigurationPageLeave ; we must save them
 Page custom ZB_Page InputDataZB
+
+;second directory selection
+!define MUI_PAGE_HEADER_SUBTEXT "Mamonsu"
+!define MUI_DIRECTORYPAGE_TEXT_TOP "The installer will place Mamonsu log directory in the following folder. To install in a differenct folder, click Browse and select another folder. Click Next to continue."
+!define MUI_DIRECTORYPAGE_VARIABLE $log_dir
+!define MUI_PAGE_CUSTOMFUNCTION_PRE CheckLOG
+!insertmacro MUI_PAGE_DIRECTORY
 
 ;!insertmacro MUI_PAGE_STARTMENU Application $StartMenuDir ; we need 'Application' for desc
 !insertmacro MUI_PAGE_INSTFILES
@@ -129,6 +138,7 @@ Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
  ;installation procedure
 
  ; stop service
+
  ${if} $action != ''
    Call StopService
  ${endif}
@@ -137,6 +147,7 @@ Section "${NAME} ${VERSION}" section1 ; we need section number 2 for desc
  File "..\win\${VERSION}\service.exe" ; pick that file and pack it to installer
  File "..\win\${VERSION}\agent.exe"
  File "..\win\${VERSION}\template.xml"
+ CreateDirectory "$log_dir"
  WriteUninstaller "$INSTDIR\Uninstall.exe"
 
  ;create user
@@ -158,8 +169,9 @@ Section "Uninstall"
   Delete "$INSTDIR\agent.conf"
   Delete "$INSTDIR\agent.exe"
   Delete "$INSTDIR\service.exe"
-  RMDir "$INSTDIR"
-  Call un.DeleteReg 
+  Delete "$INSTDIR\template.xml"
+  Delete "$INSTDIR\Uninstall.exe"
+  Call un.DeleteReg
 SectionEnd
 
 ;------------------------------------------
@@ -195,6 +207,11 @@ Function CheckMamonsu
   ${endif} 
 FunctionEnd
 
+Function CheckLOG
+ ${if} $action != ''
+ Abort
+ ${endif}
+FunctionEnd
 
 Function CheckPG
  ; check EDB installation
@@ -270,38 +287,33 @@ Function CheckZB
    Abort
  ${endif}
 
- ReadRegStr $hostname HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
  ReadRegStr $img_path HKLM "System\CurrentControlSet\Services\Zabbix Agent" "ImagePath"
 
  ${If} $img_path == ''
-   ;No zabbix agent instalation found
    Abort
  ${EndIf}
 
- StrCpy $0 ''
- StrCpy $1 ''
  ${RECaptureMatches} $0 '^.* --config \"(.+.conf)\"(.*)?' $img_path 1 ; 1 - partial string match
  Pop $1
  StrCpy $zb_conf $1
+ 
+ ${ifnot} ${FileExists} $zb_conf
+ Abort
+ ${endif}
 
  ${ConfigRead} "$zb_conf" "ServerActive=" $zb_host
- ${RECaptureMatches} $0 "([A-Za-z0-9_-.]+):?(\d+)?" $zb_host 0 ; 0 - full string match
- ${If} $0 == 'true'
+ ${RECaptureMatches} $0 "([A-Za-z0-9.]+):?(\d+)?" $zb_host 0 ; 0 - full string match
+ ${if} $0 != 'false' ; $0 can contain false or number of matches
    Pop $1
    Pop $2
    StrCpy $zb_address $1
    StrCpy $zb_port $2
-  ${else}
-   goto zb_client
- ${EndIf}
+ ${endif}
 
- zb_client:
  ${ConfigRead} "$zb_conf" "Hostname=" $zb_client
- MessageBox MB_OK "$zb_client"
- ${RECaptureMatches} $0 "(.*)" $zb_client 0 
-  ${if} $0 == 'true'
+ ${RECaptureMatches} $0 "(.+)" "$zb_client" 0 ; 0 - full string match
+  ${if} $0 != 'false'
    Pop $1
-   MessageBox MB_OK "$1"
    StrCpy $zb_client $1
   ${else}
    StrCpy $zb_client $hostname
@@ -313,16 +325,14 @@ Function DefaultConf
  ${if} $action != ''
  Abort
  ${endif}
-
-StrCpy $0 ''
-StrCpy $1 ''
+ ReadRegStr $hostname HKLM "System\CurrentControlSet\Control\ComputerName\ActiveComputerName" "ComputerName"
+ StrCpy $log_dir '$INSTDIR\logs'
 ${If} $pg_datadir != ''
-  ;TODO check if file EXIST 
+  ;TODO check if file EXIST
   ${ConfigRead} "$pg_datadir\postgresql.conf" "listen_addresses = " $pg_host
   ${RECaptureMatches} $0 "^\'(.+)\'" $pg_host 1 ; match goes to $1
   Pop $1
   StrCpy $pg_host $1
-;  MessageBox MB_OK "$pg_host"
 ${EndIf}
 
 ${If} $pg_host == 'localhost'
@@ -398,7 +408,7 @@ FunctionEnd
 
 Function InputData
  ${if} $action != ''
- Abort
+  Abort
  ${endif}
 
   ${NSD_GetText} $pg_host_input $pg_host
@@ -407,15 +417,15 @@ Function InputData
   ${NSD_GetText} $pg_db_input $pg_db
   ${NSD_GetText} $pg_password_input $pg_password
 
-${If} $pg_password == ''
-StrCpy $pg_password 'None' 
-${EndIf}  
+ ${If} $pg_password == ''
+  StrCpy $pg_password 'None' 
+ ${EndIf}  
 FunctionEnd
 
 
 Function ZB_Page
  ${if} $action != ''
- Abort
+  Abort
  ${endif}
 
   !insertmacro MUI_HEADER_TEXT $(ZB_TITLE) $(ZB_SUBTITLE)
@@ -423,7 +433,7 @@ Function ZB_Page
   Pop $Dialog
 
   ${If} $Dialog == error
-    Abort
+   Abort
   ${EndIf}
 
   ${NSD_CreateLabel} 0 2u 60u 12u "Zabbix host"
@@ -478,6 +488,7 @@ Function CreateUser
   StrCpy $user_password $0
   
   DetailPrint "Create user ..."
+  DetailPrint "$user_password"
   UserMgr::CreateAccountEx "${USER}" "$user_password" "${USER}" "${USER}" "${USER}" "UF_PASSWD_NOTREQD|UF_DONT_EXPIRE_PASSWD"
   Pop $0
   DetailPrint "CreateUser Result : $0"
@@ -511,31 +522,41 @@ Function CreateConfig
   FileOpen $0 $1 w
   FileWrite $0 '[zabbix]$\r$\nclient = $zb_client$\r$\naddress = $zb_address$\r$\nport = $zb_port$\r$\n$\r$\n\
 [postgres]$\r$\nuser = $pg_user$\r$\ndatabase = $pg_db$\r$\npassword = $2$\r$\nhost = $pg_host$\r$\nport = $pg_port$\r$\n$\r$\n\
-[log]$\r$\nfile = $INSTDIR\mamonsu.log$\r$\nlevel = INFO$\r$\n'
+[log]$\r$\nfile = $log_dir\mamonsu.log$\r$\nlevel = DEBUG$\r$\n'
   FileClose $0
   Rename $1 "$INSTDIR\agent.conf"
  
  install:
  AccessControl::DisableFileInheritance "$INSTDIR"
- Pop $0 ; "error" on errors
+ AccessControl::DisableFileInheritance "$log_dir"
 
- ;set directory ownership to ${USER}
+ ;set INSTALLDIR ownership to ${USER}
  AccessControl::SetFileOwner "$INSTDIR" "${USER}"
  Pop $0 ; "error" on errors
  DetailPrint "Change file owner to ${USER} : $0"
- AccessControl::GrantOnFile "$INSTDIR" "(S-1-3-0)" "FullAccess" ; S-1-3-0 - owner
+ AccessControl::GrantOnFile "$INSTDIR" "${USER}" "FullAccess" ; S-1-3-0 - owner
+
+ ;revoke Users from INSTALLDIR and logs
+ AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
+ AccessControl::RevokeOnFile "$log_dir" "(S-1-5-32-545)" "FullAccess"
+
+ ;set logs directory owner
+ AccessControl::SetFileOwner "$log_dir" "${USER}"
+ Pop $0 ; "error" on errors
+ DetailPrint "Change file owner to ${USER} : $0"
+ AccessControl::GrantOnFile "$log_dir" "${USER}" "GenericRead + GenericWrite"
+ AccessControl::GrantOnFile "$log_dir" "${USER}" "FullAccess"
+ AccessControl::GrantOnFile "$log_dir" "${USER}" "AddFile"
 
  AccessControl::SetFileOwner "$INSTDIR\service.exe" "${USER}"
- Pop $0 ; "error" on errors
  AccessControl::GrantOnFile "$INSTDIR\service.exe" "(S-1-3-0)" "FullAccess"
 
  AccessControl::SetFileOwner "$INSTDIR\agent.conf" "${USER}"
- Pop $0 ; "error" on errors
  AccessControl::GrantOnFile "$INSTDIR\agent.conf" "(S-1-3-0)" "FullAccess"
 
- ;revoke Users
- AccessControl::RevokeOnFile "$INSTDIR" "(S-1-5-32-545)" "FullAccess"
- Pop $0 ; "error" on errors
+ AccessControl::SetFileOwner "$INSTDIR\template.xml" "${USER}"
+ AccessControl::GrantOnFile "$INSTDIR\template.xml" "(S-1-3-0)" "FullAccess"
+
  cancel:
 FunctionEnd
 
@@ -580,12 +601,14 @@ Function CreateService
         nsExec::ExecToStack /TIMEOUT=10000 '"$INSTDIR\service.exe" update'
           Pop $0
           Pop $1
-          ${if} $0 == 'error'
-          DetailPrint "Result: error"
-          DetailPrint "$1"
-          ${elseif} $0 == 0
-          DetailPrint "Result: ok"
-          ${endif}
+           ${if} $0 == 0
+             DetailPrint "Result: ok"
+           ${elseif} $0 == 'error'
+             DetailPrint "Result: error"
+             DetailPrint "$1"
+           ${elseif} $0 == 'timeout'
+             DetailPrint "Result: timeout"
+           ${endif}
         goto cancel
         ${elseif} $action == 'reinstall'
         DetailPrint "Service exist and user was not recreated, so its ok to use existing service"
@@ -595,71 +618,54 @@ Function CreateService
     ${endif}
   ${endif} 
  DetailPrint "Creating service ${SERVICE_NAME} ... "
- DetailPrint '"$INSTDIR\service.exe" --username "$hostname\${USER}" --password "$user_password" --startup delayed install"'
  nsExec::ExecToStack /TIMEOUT=10000 '"$INSTDIR\service.exe" --username "$hostname\${USER}" --password "$user_password" --startup delayed install'
  Pop $0
  Pop $1
- ${if} $0 == 'error'
+ ${if} $0 == 0
+   DetailPrint "Result: ok"
+ ${elseif} $0 == 'error'
    DetailPrint "Result: error"
    DetailPrint "$1"
- ${elseif} $0 == 0
-   DetailPrint "Result: ok"
+ ${elseif} $0 == 'timeout'
+  DetailPrint "Result: timeout"
  ${endif}
  cancel:
 FunctionEnd
 
 Function StopService
  DetailPrint "Stoping service ${SERVICE_NAME} ... "
- nsExec::ExecToStack /TIMEOUT=10000 'net stop mamonsu'
+ SimpleSC::StopService "${SERVICE_NAME}" 1 "30"
  Pop $0
- Pop $1
- ${if} $0 == 'error'
-   DetailPrint "Result: error"
-   DetailPrint "$1"
- ${elseif} $0 == 0
+ ${If} $0 == '0'
    DetailPrint "Result: ok"
- ${endif}
+ ${Else}
+   DetailPrint "Result: error"
+ ${EndIf}
 FunctionEnd
  
 Function StartService
  DetailPrint "Starting service ${SERVICE_NAME} ... "
- nsExec::ExecToStack /TIMEOUT=10000 'net start mamonsu'
+ SimpleSC::StartService "${SERVICE_NAME}" "" "30"
  Pop $0
- Pop $1
-
- ${if} $0 == 'timeout'
-   DetailPrint "Result: $0"  
- ${elseif} $0 == 0
+${If} $0 == '0'
    DetailPrint "Result: ok"
- ${elseif} $0 == 'error'
-   DetailPrint "Result: $0"
-   DetailPrint "$1"
- ${endif}
+ ${Else}
+   DetailPrint "Result: error"
+   MessageBox MB_OK "Service ${SERVICE_NAME} failed to start"
+ ${EndIf}
 FunctionEnd
 ;----------------------------------------------
 ; Uninstall functions
 
-#Function un.CheckExist
-#  ${Unless} ${SectionIsSelected} ${sec1}
-#    Abort
-#  ${EndUnless}
-#FunctionEnd
-
 Function un.DeleteService
-  DetailPrint "Stoping service mamonsu ..."
-  nsExec::ExecToStack /TIMEOUT=10000  'net stop mamonsu'
-  Pop $0
-  Pop $1
-  ${if} $0 == 0
-   DetailPrint "Result: ok"  
-  ${elseif} $0 == 'timeout'
-   DetailPrint "Result: $0"
-   Abort
-  ${elseif} $0 == 'error'
-   DetailPrint "Result: $0"
-   DetailPrint "$1"
-   Abort
-  ${endif}
+ DetailPrint "Stoping service ${SERVICE_NAME} ... "
+ SimpleSC::StopService "${SERVICE_NAME}" 1 "30"
+ Pop $0
+ ${If} $0 == '0'
+   DetailPrint "Result: ok"
+ ${Else}
+   DetailPrint "Result: error"
+ ${EndIf}
 
   ;remove
   DetailPrint "Removing service mamonsu ..."
@@ -670,11 +676,9 @@ Function un.DeleteService
     DetailPrint "Result: ok"  
   ${elseif} $0 == 'timeout'
     DetailPrint "Result: $0"
-    Abort
   ${elseif} $0 == 'error'
     DetailPrint "Result: $0"
     DetailPrint "$1"
-    Abort
   ${endif}
 FunctionEnd
 
