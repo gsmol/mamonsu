@@ -97,6 +97,7 @@ Page custom ZB_Page InputDataZB
 !define MUI_DIRECTORYPAGE_TEXT_TOP "The installer will place Mamonsu log directory in the following folder. To install in a differenct folder, click Browse and select another folder. Click Next to continue."
 !define MUI_DIRECTORYPAGE_VARIABLE $log_dir
 !define MUI_PAGE_CUSTOMFUNCTION_PRE CheckLOG
+SpaceTexts none
 !insertmacro MUI_PAGE_DIRECTORY
 
 ;!insertmacro MUI_PAGE_STARTMENU Application $StartMenuDir ; we need 'Application' for desc
@@ -511,6 +512,7 @@ Function CreateConfig
  ${if} $action == 'downgrade'
  ${OrIf} $action == 'upgrade'
    CopyFiles "$ext_config" "$INSTDIR"
+   ${REReplace} $0 "$INSTDIR\agent.conf" "file = (.+)" "$log_dir\mamonsu.log" 0
    goto install
  ${elseif} $action == 'reinstall'
  goto cancel
